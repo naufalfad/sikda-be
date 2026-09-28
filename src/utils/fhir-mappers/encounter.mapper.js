@@ -10,11 +10,6 @@ const formatReference = (prefix, id) => {
 };
 
 const buildEncounterPayload = (data, orgId) => {
-  // Use actual registration timestamp (ISO-8601 UTC)
-  const startEncounter = data.tanggalRegistrasi 
-    ? new Date(data.tanggalRegistrasi).toISOString() 
-    : (data.waktuRegistrasi || data.waktuPemeriksaanMulai || new Date().toISOString());
-
   // Dynamic status mapping
   const statusMap = {
     'MENUNGGU': 'arrived',
@@ -24,14 +19,71 @@ const buildEncounterPayload = (data, orgId) => {
   };
   const fhirStatus = data.status || statusMap[data.statusKunjungan] || 'arrived';
 
-  const endEncounter = data.waktuDischarge 
-    ? new Date(data.waktuDischarge).toISOString() 
-    : (data.waktuPemeriksaanSelesai || (fhirStatus === 'finished' ? new Date().toISOString() : undefined));
+  // Ensure chronological, valid ISO timestamps
+  const startRaw = data.timestamp && !isNaN(Number(data.timestamp))
+    ? new Date(Number(data.timestamp))
+    : (data.tanggalRegistrasi ? new Date(data.tanggalRegistrasi) : new Date());
+  
+  const startTime = startRaw.getTime();
+  const inProgressTime = data.waktuPemeriksaanMulai
+    ? Math.max(new Date(data.waktuPemeriksaanMulai).getTime(), startTime)
+    : startTime;
+
+  const endTimeRaw = data.waktuDischarge || data.waktuPemeriksaanSelesai || (fhirStatus === 'finished' ? new Date() : undefined);
+  const endTime = endTimeRaw ? Math.max(new Date(endTimeRaw).getTime(), inProgressTime) : undefined;
+
+  const startIso = new Date(startTime).toISOString();
+  const inProgressIso = new Date(inProgressTime).toISOString();
+  const endIso = endTime ? new Date(endTime).toISOString() : undefined;
+
+  // Build compliant, non-duplicated statusHistory
+  let statusHistory = [];
+  if (fhirStatus === 'arrived') {
+    statusHistory = [
+      {
+        status: 'arrived',
+        period: { start: startIso }
+      }
+    ];
+  } else if (fhirStatus === 'in-progress') {
+    statusHistory = [
+      {
+        status: 'arrived',
+        period: { start: startIso, end: inProgressIso }
+      },
+      {
+        status: 'in-progress',
+        period: { start: inProgressIso }
+      }
+    ];
+  } else if (fhirStatus === 'finished') {
+    statusHistory = [
+      {
+        status: 'arrived',
+        period: { start: startIso, end: inProgressIso }
+      },
+      {
+        status: 'in-progress',
+        period: { start: inProgressIso, end: endIso }
+      },
+      {
+        status: 'finished',
+        period: { start: endIso, end: endIso }
+      }
+    ];
+  } else {
+    statusHistory = [
+      {
+        status: fhirStatus,
+        period: { start: startIso, ...(endIso && { end: endIso }) }
+      }
+    ];
+  }
 
   // Map Jenis Pelayanan lokal ke FHIR Class
   let classCode = "AMB"; // Default Ambulatory (Rawat Jalan)
   let classDisplay = "ambulatory";
-  
+
   if (data.jenisPelayanan) {
     const jp = data.jenisPelayanan.toLowerCase();
     if (jp.includes('inap')) {
@@ -90,65 +142,10 @@ const buildEncounterPayload = (data, orgId) => {
       ]
     }),
     period: {
-      start: startEncounter,
-      ...(endEncounter && { end: endEncounter })
+      start: startIso,
+      ...(endIso && { end: endIso })
     },
-    statusHistory: [
-      {
-        status: fhirStatus,
-        period: {
-          start: startEncounter,
-          ...(endEncounter && { end: endEncounter })
-        }
-      },
-      ...(data.waktuPemeriksaanMulai ? [{
-        status: "in-progress",
-        period: {
-          start: new Date(data.waktuPemeriksaanMulai).toISOString(),
-          end: endEncounter
-        }
-      }] : []),
-      ...(fhirStatus === 'finished' ? [{
-        status: "finished",
-        period: {
-          start: endEncounter,
-          end: endEncounter
-        }
-      }] : [])
-    ],
-<<<<<<< HEAD
-    location: [
-      {
-        location: {
-          reference: formatReference("Location", data.poliIhs),
-          display: data.poliName
-        },
-        extension: [
-          {
-            url: "https://fhir.kemkes.go.id/r4/StructureDefinition/ServiceClass",
-            valueCodeableConcept: {
-              coding: [
-                {
-                  system: "http://terminology.kemkes.go.id/CodeSystem/locationServiceClass-Outpatient",
-                  code: data.kelasPoliCode || "reguler",
-                  display: data.kelasPoliDisplay || "Kelas Reguler"
-                }
-              ]
-            },
-            upgradeClassIndicator: {
-              coding: [
-                {
-                  system: "http://terminology.kemkes.go.id/CodeSystem/locationUpgradeClass",
-                  code: data.upgradeClassCode || "kelas-tetap",
-                  display: data.upgradeClassDisplay || "Kelas Tetap Perawatan"
-                }
-              ]
-            }
-          }
-        ]
-      }
-    ],
-=======
+    statusHistory: statusHistory,
     ...(data.poliIhs && {
       location: [
         {
@@ -159,7 +156,6 @@ const buildEncounterPayload = (data, orgId) => {
         }
       ]
     }),
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
     serviceProvider: {
       reference: formatReference("Organization", orgId)
     },

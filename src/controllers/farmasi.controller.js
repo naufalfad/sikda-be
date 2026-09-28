@@ -7,10 +7,16 @@ const { toRawatJalanBundle } = require('../utils/fhir-mappers');
 // 1. Get Antrian Farmasi (MENUNGGU_FARMASI)
 exports.getAntrianFarmasi = async (req, res) => {
   try {
+    const where = {
+      status: 'MENUNGGU_FARMASI'
+    };
+
+    if (req.user && req.user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(req.user.role)) {
+      where.kunjungan = { faskesId: req.user.faskesId };
+    }
+
     const resepList = await prisma.resep.findMany({
-      where: {
-        status: 'MENUNGGU_FARMASI'
-      },
+      where,
       include: {
         pasien: true,
         dokter: {
@@ -129,28 +135,41 @@ exports.prosesResep = async (req, res) => {
         throw new Error('Pasien belum melakukan pembayaran di Kasir. Mohon arahkan pasien ke Kasir terlebih dahulu.');
       }
 
-      // 2. Kurangi stok obat
+      // 2. Kurangi stok obat fisik di Faskes terkait
+      const targetFaskesId = req.user?.faskesId || resep.kunjungan?.poliklinik?.faskesId;
+
       for (const detail of resep.details) {
-        const obatLama = await tx.masterObat.findUnique({
-          where: { id: detail.obatId }
-        });
+        if (targetFaskesId) {
+          const stokFaskes = await tx.stokObatFaskes.findUnique({
+            where: {
+              faskesId_obatId: {
+                faskesId: targetFaskesId,
+                obatId: detail.obatId
+              }
+            },
+            include: { obat: true }
+          });
 
-        if (!obatLama) {
-          throw new Error(`Data obat tidak ditemukan untuk ID: ${detail.obatId}`);
-        }
-
-        if (obatLama.stok < detail.jumlah) {
-          throw new Error(`Stok obat ${obatLama.namaObat} tidak mencukupi. Tersedia: ${obatLama.stok}, Diminta: ${detail.jumlah}`);
-        }
-
-        await tx.masterObat.update({
-          where: { id: detail.obatId },
-          data: {
-            stok: {
-              decrement: detail.jumlah
+          if (stokFaskes) {
+            if (stokFaskes.stok < detail.jumlah) {
+              throw new Error(`Stok obat ${stokFaskes.obat?.namaObat || 'obat'} di faskes ini tidak mencukupi. Tersedia: ${stokFaskes.stok}, Diminta: ${detail.jumlah}`);
             }
+
+            await tx.stokObatFaskes.update({
+              where: {
+                faskesId_obatId: {
+                  faskesId: targetFaskesId,
+                  obatId: detail.obatId
+                }
+              },
+              data: {
+                stok: {
+                  decrement: detail.jumlah
+                }
+              }
+            });
           }
-        });
+        }
       }
 
       // 3. Update status Resep menjadi SELESAI
@@ -244,5 +263,150 @@ exports.prosesResep = async (req, res) => {
   } catch (error) {
     console.error('Error in prosesResep:', error);
     res.status(400).json({ status: 'error', message: error.message || 'Gagal memproses resep' });
+  }
+};
+
+// 4. Get Stok Obat Faskes dengan Analisis FEFO (First Expired First Out)
+exports.getStokFaskes = async (req, res) => {
+  try {
+    const faskesId = req.user?.faskesId;
+    if (!faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(req.user?.role)) {
+      return res.status(400).json({ status: 'error', message: 'Faskes ID tidak ditemukan pada sesi pengguna.' });
+    }
+
+    const where = {};
+    if (faskesId) {
+      where.faskesId = faskesId;
+    }
+
+    const stokList = await prisma.stokObatFaskes.findMany({
+      where,
+      include: {
+        obat: true,
+        faskes: { select: { id: true, namaFaskes: true, kodeFaskes: true } }
+      },
+      orderBy: [
+        { tanggalExpired: 'asc' },
+        { stok: 'asc' }
+      ]
+    });
+
+    const now = new Date();
+    const formatted = stokList.map((item) => {
+      let sisaHariExpired = null;
+      let statusExpired = 'AMAN';
+
+      if (item.tanggalExpired) {
+        const expDate = new Date(item.tanggalExpired);
+        const diffMs = expDate.getTime() - now.getTime();
+        sisaHariExpired = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+        if (sisaHariExpired < 0) {
+          statusExpired = 'KADALUWARSA';
+        } else if (sisaHariExpired <= 60) {
+          statusExpired = 'SEGERA_KADALUWARSA'; // < 60 hari (FEFO warning)
+        } else if (sisaHariExpired <= 90) {
+          statusExpired = 'WASPADA';
+        }
+      }
+
+      let statusStok = 'AMAN';
+      if (item.stok === 0) {
+        statusStok = 'HABIS';
+      } else if (item.stok <= item.stokMinimum) {
+        statusStok = 'KRITIS';
+      }
+
+      return {
+        id: item.id,
+        faskesId: item.faskesId,
+        namaFaskes: item.faskes?.namaFaskes,
+        obatId: item.obatId,
+        kodeObat: item.obat?.kodeObat,
+        namaObat: item.obat?.namaObat,
+        kategori: item.obat?.kategori,
+        sediaan: item.obat?.sediaan,
+        harga: item.obat?.harga || 0,
+        gambarUrl: item.obat?.gambarUrl,
+        stok: item.stok,
+        stokMinimum: item.stokMinimum,
+        noBatch: item.noBatch || '-',
+        tanggalExpired: item.tanggalExpired,
+        sisaHariExpired,
+        statusExpired,
+        statusStok,
+        prioritasFEFO: statusExpired === 'KADALUWARSA' ? 1 : (statusExpired === 'SEGERA_KADALUWARSA' ? 2 : (statusExpired === 'WASPADA' ? 3 : 4))
+      };
+    });
+
+    formatted.sort((a, b) => a.prioritasFEFO - b.prioritasFEFO);
+
+    res.json({
+      status: 'success',
+      data: formatted,
+      ringkasan: {
+        totalItem: formatted.length,
+        kritisCount: formatted.filter(f => f.statusStok === 'KRITIS' || f.statusStok === 'HABIS').length,
+        segeraExpiredCount: formatted.filter(f => f.statusExpired === 'SEGERA_KADALUWARSA' || f.statusExpired === 'KADALUWARSA').length
+      }
+    });
+  } catch (error) {
+    console.error('Error in getStokFaskes:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil data stok faskes' });
+  }
+};
+
+// 5. Tambah Penerimaan Stok Obat Faskes (Restock / Droping Dinkes / Pengadaan)
+exports.tambahStokMasuk = async (req, res) => {
+  try {
+    const faskesId = req.user?.faskesId;
+    if (!faskesId) {
+      return res.status(400).json({ status: 'error', message: 'Hanya petugas faskes yang dapat menambah stok faskes.' });
+    }
+
+    const { obatId, jumlahMasuk, noBatch, tanggalExpired, stokMinimum } = req.body;
+
+    if (!obatId || !jumlahMasuk || parseInt(jumlahMasuk) <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Obat dan jumlah penambahan stok valid wajib diisi.' });
+    }
+
+    const qty = parseInt(jumlahMasuk);
+    const minStock = stokMinimum !== undefined ? parseInt(stokMinimum) : undefined;
+    const expDate = tanggalExpired ? new Date(tanggalExpired) : undefined;
+
+    const stokUpdated = await prisma.stokObatFaskes.upsert({
+      where: {
+        faskesId_obatId: {
+          faskesId,
+          obatId
+        }
+      },
+      update: {
+        stok: { increment: qty },
+        ...(noBatch && { noBatch }),
+        ...(expDate && { tanggalExpired: expDate }),
+        ...(minStock !== undefined && { stokMinimum: minStock })
+      },
+      create: {
+        faskesId,
+        obatId,
+        stok: qty,
+        stokMinimum: minStock || 10,
+        noBatch: noBatch || `BATCH-${new Date().getFullYear()}`,
+        tanggalExpired: expDate || null
+      },
+      include: {
+        obat: true
+      }
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Berhasil menambahkan ${qty} ${stokUpdated.obat?.sediaan || 'unit'} untuk ${stokUpdated.obat?.namaObat}.`,
+      data: stokUpdated
+    });
+  } catch (error) {
+    console.error('Error in tambahStokMasuk:', error);
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal menambahkan stok obat.' });
   }
 };

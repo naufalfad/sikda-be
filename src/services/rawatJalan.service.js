@@ -5,6 +5,7 @@ const SatuSehatGateway = require('./satusehat/gateway.service');
 const { toRawatJalanBundle } = require('../utils/fhir-mappers');
 const kasirService = require('./kasir.service');
 const { addSatusehatSyncJob } = require('../queues/satusehat.queue');
+const { applyFaskesScope } = require('../utils/tenantScope');
 
 /**
  * Helper to extract Observation vital signs from screening record
@@ -130,7 +131,11 @@ const getAntrianDokter = async (user) => {
     },
   };
 
-  // Filter isolasi data: 
+  // Filter isolasi data multi-tenant Faskes:
+  // Dokter/Perawat hanya melihat antrian dari faskes tempat bertugas
+  applyFaskesScope(whereClause, user);
+
+  // Filter isolasi data Poliklinik: 
   // Dokter/Perawat hanya melihat antrian jika pasien masuk ke Poli-nya.
   if (user && (user.role === 'DOKTER' || user.role === 'PERAWAT') && user.poliklinikId) {
     whereClause.OR = [
@@ -160,7 +165,7 @@ const getAntrianDokter = async (user) => {
   // Kalkulasi Skor Prioritas
   kunjungans = kunjungans.map(kunjungan => {
     let score = 1; // Default: Umum (Hijau)
-    
+
     const triage = kunjungan.screening?.kategoriTriage?.toLowerCase() || '';
     if (triage === 'merah') {
       score = 4;
@@ -175,7 +180,7 @@ const getAntrianDokter = async (user) => {
         score = 2;
       }
     }
-    
+
     return { ...kunjungan, _priorityScore: score };
   });
 
@@ -184,13 +189,13 @@ const getAntrianDokter = async (user) => {
     if (b._priorityScore !== a._priorityScore) {
       return b._priorityScore - a._priorityScore;
     }
-    
+
     // Konversi jam ke object Date untuk perbandingan akurat
     const dateStrA = a.tanggalRegistrasi.toISOString().split('T')[0];
     const dateStrB = b.tanggalRegistrasi.toISOString().split('T')[0];
     const dateTimeA = new Date(`${dateStrA}T${a.jamRegistrasi || '00:00'}:00`);
     const dateTimeB = new Date(`${dateStrB}T${b.jamRegistrasi || '00:00'}:00`);
-    
+
     return dateTimeA - dateTimeB;
   });
 
@@ -206,6 +211,9 @@ const getRiwayatDokter = async (user) => {
       in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG'],
     },
   };
+
+  // Filter isolasi multi-tenant Faskes:
+  applyFaskesScope(whereClause, user);
 
   if (user && user.role === 'DOKTER') {
     whereClause.OR = [
@@ -537,23 +545,13 @@ const selesaikanPemeriksaan = async (kunjunganId, user) => {
     // Status kunjungan belum SELESAI, menunggu tindak lanjut (Resep/Rujukan/Pulang)
     await tx.kunjungan.update({
       where: { id: kunjunganId },
-<<<<<<< HEAD
       data: {
-        statusPulang: 'PULANG_SEMBUH',
-        waktuPemeriksaanSelesai: new Date(),
-      },
-    });
-
-    return rm;
-=======
-      data: { 
         statusKunjungan: 'MENUNGGU_TINDAK_LANJUT',
         satusehat_sync_status: 'PENDING'
       },
     });
 
     return updatedRm;
->>>>>>> 1f3cd31ad4b22d640644e62b13afc863e70fd8fc
   });
 
   console.log(`[Rawat Jalan] Pemeriksaan selesai untuk kunjungan ${kunjunganId}. Menunggu tindak lanjut (Resep/Rujukan/Pulang).`);
@@ -685,8 +683,8 @@ const sendBundleForKunjungan = async (kunjunganId) => {
 
     // Ekstrak ServiceRequest ID dari Respon Bundle SATUSEHAT
     if (response?.entry && Array.isArray(response.entry)) {
-      const srEntry = response.entry.find(e => 
-        e.response?.resourceType === 'ServiceRequest' || 
+      const srEntry = response.entry.find(e =>
+        e.response?.resourceType === 'ServiceRequest' ||
         e.response?.location?.includes('ServiceRequest/')
       );
       if (srEntry) {
@@ -794,7 +792,7 @@ const simpanResep = async (kunjunganId, user, resepArr) => {
  * Simpan Rujukan
  */
 const simpanRujukan = async (kunjunganId, dokterId, rujukanData) => {
-  const kunjungan = await prisma.kunjungan.findUnique({ 
+  const kunjungan = await prisma.kunjungan.findUnique({
     where: { id: kunjunganId },
     include: {
       pasien: true,
@@ -827,15 +825,7 @@ const simpanRujukan = async (kunjunganId, dokterId, rujukanData) => {
 
     await tx.kunjungan.update({
       where: { id: kunjunganId },
-<<<<<<< HEAD
-      data: {
-        statusKunjungan: 'MENUNGGU_KASIR',
-        statusPulang: 'DIRUJUK_RS',
-        waktuPemeriksaanSelesai: new Date()
-      },
-=======
       data: { statusKunjungan: 'MENUNGGU_KASIR', waktuDischarge: new Date() },
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
     });
 
     return res;
@@ -860,15 +850,7 @@ const simpanRujukan = async (kunjunganId, dokterId, rujukanData) => {
 const pulang = async (kunjunganId) => {
   const updated = await prisma.kunjungan.update({
     where: { id: kunjunganId },
-<<<<<<< HEAD
-    data: {
-      statusKunjungan: 'MENUNGGU_KASIR',
-      statusPulang: 'PULANG_SEMBUH',
-      waktuPemeriksaanSelesai: new Date()
-    },
-=======
     data: { statusKunjungan: 'MENUNGGU_KASIR', waktuDischarge: new Date() },
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
   });
 
   // Generate tagihan kasir secara otomatis

@@ -2,8 +2,33 @@ const prisma = require('../config/prisma');
 
 const klinikService = {
   // === Poliklinik ===
-  getAllPoliklinik: async () => {
+  getAllPoliklinik: async (user = null, requestedFaskesId = null) => {
+    let where = { statusAktif: true };
+
+    const effectiveFaskesId = requestedFaskesId || (user && !['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role) ? user.faskesId : null);
+
+    if (effectiveFaskesId) {
+      where = {
+        OR: [
+          { faskesId: effectiveFaskesId },
+          { faskesId: null }
+        ],
+        statusAktif: true
+      };
+    }
+
     return await prisma.poliklinik.findMany({
+      where,
+      include: {
+        faskes: {
+          select: {
+            id: true,
+            kodeFaskes: true,
+            namaFaskes: true,
+            jenisFaskes: true,
+          }
+        }
+      },
       orderBy: { namaPoli: 'asc' },
     });
   },
@@ -11,11 +36,17 @@ const klinikService = {
   createPoliklinik: async (data) => {
     return await prisma.poliklinik.create({
       data: {
+        faskesId: data.faskesId || null,
         kodePoli: data.kodePoli,
         namaPoli: data.namaPoli,
         deskripsi: data.deskripsi,
         statusAktif: data.statusAktif !== undefined ? data.statusAktif : true,
+        kdPoliPcare: data.kdPoliPcare || null,
+        noAntrianPrefix: data.noAntrianPrefix || null,
       },
+      include: {
+        faskes: true,
+      }
     });
   },
 

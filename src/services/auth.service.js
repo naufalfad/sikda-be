@@ -9,7 +9,8 @@ const loginUser = async (username, password) => {
   const user = await prisma.user.findUnique({
     where: { username },
     include: {
-      poliklinik: true
+      poliklinik: true,
+      faskes: true
     }
   });
 
@@ -30,7 +31,7 @@ const loginUser = async (username, password) => {
 
   // Buat JWT Token
   const token = jwt.sign(
-    { id: user.id, username: user.username, role: user.role, poliklinikId: user.poliklinikId },
+    { id: user.id, username: user.username, role: user.role, poliklinikId: user.poliklinikId, faskesId: user.faskesId },
     JWT_SECRET,
     { expiresIn: '8h' }
   );
@@ -43,7 +44,9 @@ const loginUser = async (username, password) => {
       namaLengkap: user.namaLengkap,
       role: user.role,
       poliklinikId: user.poliklinikId,
-      poliklinik: user.poliklinik
+      poliklinik: user.poliklinik,
+      faskesId: user.faskesId,
+      faskes: user.faskes
     }
   };
 };
@@ -57,7 +60,9 @@ const getUserById = async (id) => {
       namaLengkap: true,
       role: true,
       poliklinikId: true,
-      poliklinik: true 
+      poliklinik: true,
+      faskesId: true,
+      faskes: true
     } // Jangan ambil password
   });
 

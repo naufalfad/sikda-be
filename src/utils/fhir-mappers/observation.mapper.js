@@ -65,17 +65,6 @@ const buildObservationPayload = (data) => {
     encounter: {
       reference: `Encounter/${data.encounterId}`
     },
-<<<<<<< HEAD
-    ...(data.dokterIhs && {
-      performer: [
-        {
-          reference: `Practitioner/${data.dokterIhs}`,
-          display: data.dokterName
-        }
-      ]
-    }),
-    effectiveDateTime: data.effectiveDateTime || startEncounter
-=======
     ...(data.dokterIhs && data.dokterIhs !== 'undefined' && {
       performer: [
         {
@@ -84,8 +73,8 @@ const buildObservationPayload = (data) => {
         }
       ]
     }),
-    effectiveDateTime: startEncounter
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
+    effectiveDateTime: startEncounter,
+    issued: startEncounter
   };
 
   // Khusus untuk tekanan darah (Blood Pressure), strukturnya beda karena pakai "component"
@@ -107,69 +96,10 @@ const buildObservationPayload = (data) => {
   return payload;
 };
 
-<<<<<<< HEAD
-/**
- * Build Observation Payload untuk Tingkat Kesadaran (LOINC 67775-7 + SNOMED-CT)
- */
-const buildConsciousnessObservationPayload = (data) => {
-  const snomedMap = {
-    'alert': { code: '248234008', display: 'Mentally alert' },
-    'voice': { code: '300202002', display: 'Response to voice' },
-    'pain': { code: '450847001', display: 'Responds to pain' },
-    'unresponsive': { code: '422768004', display: 'Unresponsive' },
-    'confusion': { code: '130987000', display: 'Acute confusion' },
-    'delirium': { code: '2776000', display: 'Delirium' }
-  };
-
-  const selected = snomedMap[data.kesadaranCode] || snomedMap['alert'];
-
-  return buildObservationPayload({
-    ...data,
-    categoryCode: "exam",
-    categoryDisplay: "Exam",
-    loincCode: "67775-7",
-    loincDisplay: "Level of responsiveness",
-    valueCodeableConcept: {
-      coding: [
-        {
-          system: "http://snomed.info/sct",
-          code: data.snomedCode || selected.code,
-          display: data.snomedDisplay || selected.display
-        }
-      ]
-    }
-  });
-};
-
-/**
- * Build Observation Payload untuk Pemeriksaan Fisik Head to Toe (Category: exam)
- */
-const buildPhysicalExamObservationPayload = (data) => {
-  const organMeta = HEAD_TO_TOE_LOINC[data.organKey] || {};
-  const loincCode = data.loincCode || organMeta.loinc || "29545-1";
-  const loincDisplay = data.loincDisplay || organMeta.display || "Physical findings";
-
-  const codings = [
-    {
-      system: "http://loinc.org",
-      code: loincCode,
-      display: loincDisplay
-    }
-  ];
-
-  if (organMeta.snomed) {
-    codings.push({
-      system: "http://snomed.info/sct",
-      code: organMeta.snomed,
-      display: organMeta.snomedDisplay
-    });
-  }
-=======
 const toFHIRRadiologyObservation = (data) => {
   const effectiveDate = data.createdAt
     ? new Date(data.createdAt).toISOString()
     : new Date().toISOString();
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
 
   return {
     resourceType: "Observation",
@@ -179,21 +109,13 @@ const toFHIRRadiologyObservation = (data) => {
         coding: [
           {
             system: "http://terminology.hl7.org/CodeSystem/observation-category",
-<<<<<<< HEAD
-            code: "exam",
-            display: "Exam"
-=======
             code: "imaging",
             display: "Imaging"
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
           }
         ]
       }
     ],
     code: {
-<<<<<<< HEAD
-      coding: codings
-=======
       coding: [
         {
           system: "http://loinc.org",
@@ -201,63 +123,12 @@ const toFHIRRadiologyObservation = (data) => {
           display: data.namaPemeriksaan || "Diagnostic radiography"
         }
       ]
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
     },
     subject: {
       reference: `Patient/${data.pasienIhs}`,
       display: data.pasienName
     },
     encounter: {
-<<<<<<< HEAD
-      reference: `Encounter/${data.encounterId}`
-    },
-    effectiveDateTime: data.effectiveDateTime || new Date().toISOString(),
-    valueString: data.hasilPemeriksaan
-  };
-};
-
-/**
- * Build Observation Payload untuk Status Psikologis (Survey - LOINC 8693-4)
- */
-const buildPsychologicalStatusObservationPayload = (data) => {
-  const psikoMap = {
-    'normal': { code: '17326005', display: 'Well in self' },
-    'cemas': { code: '48694002', display: 'Feeling anxious' },
-    'takut': { code: '1402001', display: 'Afraid' },
-    'marah': { code: '75408008', display: 'Feeling angry' },
-    'sedih': { code: '420038007', display: 'Feeling unhappy' },
-    'lainnya': { code: '74964007', display: 'Other' }
-  };
-
-  const selected = psikoMap[data.psikologisKey] || psikoMap['normal'];
-
-  return buildObservationPayload({
-    ...data,
-    categoryCode: "survey",
-    categoryDisplay: "Survey",
-    loincCode: "8693-4",
-    loincDisplay: "Mental Status",
-    valueCodeableConcept: {
-      coding: [
-        {
-          system: "http://snomed.info/sct",
-          code: data.snomedCode || selected.code,
-          display: data.snomedDisplay || selected.display
-        }
-      ],
-      ...(data.text && { text: data.text })
-    }
-  });
-};
-
-module.exports = { 
-  HEAD_TO_TOE_LOINC,
-  buildObservationPayload, 
-  buildConsciousnessObservationPayload,
-  buildPhysicalExamObservationPayload,
-  buildPsychologicalStatusObservationPayload
-};
-=======
       reference: data.encounterId?.startsWith('urn:uuid:') ? data.encounterId : `Encounter/${data.encounterId}`
     },
     effectiveDateTime: effectiveDate,
@@ -281,4 +152,3 @@ module.exports = {
 };
 
 module.exports = { buildObservationPayload, toFHIRRadiologyObservation };
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683

@@ -22,7 +22,7 @@ const buildConditionPayload = (data) => {
   let verCode = "provisional"; // Default
   let verDisplay = "Provisional";
   const ver = data.statusDiagnosis ? data.statusDiagnosis.toLowerCase() : "";
-  
+
   if (ver === "definitif" || ver === "confirmed") {
     verCode = "confirmed";
     verDisplay = "Confirmed";
@@ -102,18 +102,10 @@ const buildConditionPayload = (data) => {
     encounter: {
       reference: `Encounter/${data.encounterId}`
     },
-<<<<<<< HEAD
-    ...(data.onsetDateTime && { onsetDateTime: data.onsetDateTime }),
-    ...(data.dokterIhs && {
-      recorder: {
-        reference: `Practitioner/${data.dokterIhs}`,
-        display: data.dokterName
-=======
     ...(data.dokterIhs && data.dokterIhs !== 'undefined' && {
       recorder: {
         reference: `Practitioner/${data.dokterIhs}`,
         ...(data.dokterName && { display: data.dokterName })
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
       }
     })
   };

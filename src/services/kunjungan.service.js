@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { applyFaskesScope } = require('../utils/tenantScope');
 
 /**
  * Get all Kunjungan with status MENUNGGU for Screening
@@ -7,6 +8,9 @@ const getKunjunganScreening = async (user) => {
   const whereClause = {
     statusKunjungan: 'MENUNGGU',
   };
+
+  // Filter isolasi data multi-tenant Faskes:
+  applyFaskesScope(whereClause, user);
 
   // Filter isolasi data: Perawat hanya melihat antrian di Polinya
   if (user && user.role === 'PERAWAT' && user.poliklinikId) {
@@ -113,15 +117,18 @@ const updateStatusKunjungan = async (kunjunganId, statusBaru) => {
 /**
  * Dapatkan Statistik Dashboard Loket Pendaftaran
  */
-const getDashboardStats = async () => {
+const getDashboardStats = async (user) => {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
+  const baseWhere = applyFaskesScope({}, user);
+
   // 1. Stats Hari Ini
   const totalHariIni = await prisma.kunjungan.count({
     where: {
+      ...baseWhere,
       tanggalRegistrasi: { gte: today, lt: tomorrow }
     }
   });
@@ -129,12 +136,14 @@ const getDashboardStats = async () => {
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
   const totalBulanIni = await prisma.kunjungan.count({
     where: {
+      ...baseWhere,
       tanggalRegistrasi: { gte: firstDayOfMonth, lt: tomorrow }
     }
   });
 
   const menunggu = await prisma.kunjungan.count({
     where: {
+      ...baseWhere,
       tanggalRegistrasi: { gte: today, lt: tomorrow },
       statusKunjungan: { in: ['MENUNGGU', 'MENUNGGU_DOKTER'] }
     }
@@ -142,6 +151,7 @@ const getDashboardStats = async () => {
 
   const sedangDilayani = await prisma.kunjungan.count({
     where: {
+      ...baseWhere,
       tanggalRegistrasi: { gte: today, lt: tomorrow },
       statusKunjungan: { in: ['DIPROSES_SCREENING', 'DIPERIKSA'] }
     }
@@ -149,6 +159,7 @@ const getDashboardStats = async () => {
 
   const selesai = await prisma.kunjungan.count({
     where: {
+      ...baseWhere,
       tanggalRegistrasi: { gte: today, lt: tomorrow },
       statusKunjungan: { in: ['SELESAI', 'MENUNGGU_KASIR', 'MENUNGGU_FARMASI', 'PULANG', 'BATAL'] }
     }
@@ -156,7 +167,10 @@ const getDashboardStats = async () => {
 
   // 2. Stats Asuransi (Join Pasien -> PenjaminPasien)
   const allKunjunganToday = await prisma.kunjungan.findMany({
-    where: { tanggalRegistrasi: { gte: today, lt: tomorrow } },
+    where: {
+      ...baseWhere,
+      tanggalRegistrasi: { gte: today, lt: tomorrow }
+    },
     include: {
       pasien: {
         include: { penjamin: true }
@@ -289,8 +303,9 @@ const getPerawatDashboardStats = async (user) => {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // Filter isolasi data: Perawat hanya melihat antrean di Polinya
+  // Filter isolasi data: Perawat hanya melihat antrean di Polinya & Faskesnya
   const poliFilter = user && user.poliklinikId ? { poliklinikId: user.poliklinikId } : {};
+  applyFaskesScope(poliFilter, user);
 
   // 1. Stats Hari Ini (Khusus Poli ybs)
   const allKunjunganPoli = await prisma.kunjungan.findMany({
@@ -369,11 +384,14 @@ const getDokterDashboardStats = async (user) => {
     ];
   }
 
+  const whereClause = {
+    tanggalRegistrasi: { gte: today, lt: tomorrow },
+    ...(poliFilter.OR ? { OR: poliFilter.OR } : poliFilter)
+  };
+  applyFaskesScope(whereClause, user);
+
   const allKunjunganPoliHariIni = await prisma.kunjungan.findMany({
-    where: {
-      tanggalRegistrasi: { gte: today, lt: tomorrow },
-      ...(poliFilter.OR ? { OR: poliFilter.OR } : poliFilter)
-    }
+    where: whereClause
   });
 
   const totalHariIni = allKunjunganPoliHariIni.length;

@@ -12,17 +12,17 @@ const { buildRelatedPersonPayload, buildQuestionnaireResponsePayload } = require
 const getPatientByNIK = async (nik) => {
   try {
     const fhirClient = await createFhirClient();
-    
+
     // Format pencarian pasien berdasarkan NIK sesuai standar SATUSEHAT
     const response = await fhirClient.get(`/Patient?identifier=https://fhir.kemkes.go.id/id/nik|${nik}`);
-    
+
     // Periksa apakah ada pasien yang ditemukan
     if (response.data && response.data.entry && response.data.entry.length > 0) {
       const patient = response.data.entry[0].resource;
-      
+
       // Ambil ihsNumber (id) dari resource pasien
       const ihsNumber = patient.id;
-      
+
       return {
         success: true,
         data: patient,
@@ -48,7 +48,7 @@ const getPatientByNIKIbu = async (nikIbu) => {
   try {
     const fhirClient = await createFhirClient();
     const response = await fhirClient.get(`/Patient?identifier=https://fhir.kemkes.go.id/id/nik-ibu|${nikIbu}`);
-    
+
     if (response.data && response.data.entry && response.data.entry.length > 0) {
       return {
         success: true,
@@ -76,7 +76,7 @@ const createPatient = async (data) => {
   try {
     const fhirClient = await createFhirClient();
     const payload = buildPatientPayload(data);
-    
+
     console.log("[SATUSEHAT] Mengirim POST /Patient dengan payload:", JSON.stringify(payload, null, 2));
 
     const response = await fhirClient.post('/Patient', payload);
@@ -141,17 +141,17 @@ const createRelatedPerson = async (data, bayiIhs, ibuIhs) => {
 const getPractitionerByNIK = async (nik) => {
   try {
     const fhirClient = await createFhirClient();
-    
+
     // Format pencarian praktisioner berdasarkan NIK sesuai standar SATUSEHAT
     const response = await fhirClient.get(`/Practitioner?identifier=https://fhir.kemkes.go.id/id/nik|${nik}`);
-    
+
     // Periksa apakah ada praktisioner yang ditemukan
     if (response.data && response.data.entry && response.data.entry.length > 0) {
       const practitioner = response.data.entry[0].resource;
-      
+
       // Ambil ihsNumber (id) dari resource
       const ihsNumber = practitioner.id;
-      
+
       return {
         success: true,
         data: practitioner,
@@ -169,12 +169,12 @@ const getPractitionerByNIK = async (nik) => {
   }
 };
 
-const { 
-  buildLocationPayload, 
-  buildEncounterPayload, 
-  buildObservationPayload, 
-  buildConditionPayload, 
-  buildMedicationPayload, 
+const {
+  buildLocationPayload,
+  buildEncounterPayload,
+  buildObservationPayload,
+  buildConditionPayload,
+  buildMedicationPayload,
   buildMedicationRequestPayload,
   buildProcedurePayload,
   buildAllergyPayload,
@@ -195,15 +195,15 @@ const createLocation = async (poliklinik) => {
   try {
     const fhirClient = await createFhirClient();
     const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-    
+
     if (!orgId) {
       throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
     }
 
     const payload = buildLocationPayload(poliklinik, orgId);
-    
+
     const response = await fhirClient.post('/Location', payload);
-    
+
     return {
       success: true,
       data: response.data,
@@ -224,18 +224,18 @@ const createEncounter = async (data) => {
   try {
     const fhirClient = await createFhirClient();
     const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-    
+
     if (!orgId) {
       throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
     }
 
     const payload = buildEncounterPayload(data, orgId);
-    
+
     // Cetak payload ke terminal agar bisa dilihat oleh developer
     console.log("[SATUSEHAT] Mengirim Encounter Payload:", JSON.stringify(payload, null, 2));
 
     const response = await fhirClient.post('/Encounter', payload);
-    
+
     return {
       success: true,
       data: response.data,
@@ -256,7 +256,7 @@ const updateEncounter = async (encounterId, data) => {
   try {
     const fhirClient = await createFhirClient();
     const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-    
+
     if (!orgId) {
       throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
     }
@@ -267,7 +267,7 @@ const updateEncounter = async (encounterId, data) => {
     console.log(`[SATUSEHAT] Updating Encounter ${encounterId} Payload:`, JSON.stringify(payload, null, 2));
 
     const response = await fhirClient.put(`/Encounter/${encounterId}`, payload);
-    
+
     return {
       success: true,
       data: response.data,
@@ -286,14 +286,14 @@ const updateEncounter = async (encounterId, data) => {
 const createCondition = async (data) => {
   try {
     const fhirClient = await createFhirClient();
-    
+
     const payload = buildConditionPayload(data);
 
     // Cetak payload ke terminal agar bisa dilihat oleh developer
     console.log("[SATUSEHAT] Mengirim Condition Payload:", JSON.stringify(payload, null, 2));
 
     const response = await fhirClient.post('/Condition', payload);
-    
+
     return {
       success: true,
       data: response.data,
@@ -312,7 +312,7 @@ const createCondition = async (data) => {
 const createObservation = async (data) => {
   const fhirClient = await createFhirClient();
   const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-  
+
   if (!orgId) {
     throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
   }
@@ -323,7 +323,7 @@ const createObservation = async (data) => {
   console.log("[SATUSEHAT] Mengirim Observation Payload:", JSON.stringify(payload, null, 2));
 
   const response = await fhirClient.post('/Observation', payload);
-  
+
   return {
     success: true,
     data: response.data,
@@ -341,7 +341,7 @@ const createObservationBundle = async (observationsData) => {
 
   const fhirClient = await createFhirClient();
   const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-  
+
   if (!orgId) {
     throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
   }
@@ -370,7 +370,7 @@ const createObservationBundle = async (observationsData) => {
 
   // Post ke root URL ('/') karena tipe Bundle transaction
   const response = await fhirClient.post('/', bundle);
-  
+
   // Ekstrak ID yang berhasil di-generate dari response
   const observationIds = [];
   if (response.data && response.data.entry) {
@@ -385,7 +385,7 @@ const createObservationBundle = async (observationsData) => {
       }
     });
   }
-  
+
   return {
     success: true,
     data: response.data,
@@ -400,7 +400,7 @@ const createObservationBundle = async (observationsData) => {
 const createPrescription = async (data) => {
   const fhirClient = await createFhirClient();
   const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-  
+
   if (!orgId) {
     throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
   }
@@ -421,7 +421,7 @@ const createPrescription = async (data) => {
   // 2. Kirim MedicationRequest (Instruksi Resep)
   const medReqPayload = buildMedicationRequestPayload(data, medicationId, orgId);
   console.log("[SATUSEHAT] Mengirim MedicationRequest Payload:", JSON.stringify(medReqPayload, null, 2));
-  
+
   try {
     const reqResponse = await fhirClient.post('/MedicationRequest', medReqPayload);
     return {
@@ -443,18 +443,18 @@ const createProcedure = async (data) => {
   try {
     const fhirClient = await createFhirClient();
     const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-    
+
     if (!orgId) {
       throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
     }
-    
+
     const payload = buildProcedurePayload(data, orgId);
 
     // Cetak payload ke terminal agar bisa dilihat oleh developer
     console.log("[SATUSEHAT] Mengirim Procedure Payload:", JSON.stringify(payload, null, 2));
 
     const response = await fhirClient.post('/Procedure', payload);
-    
+
     return {
       success: true,
       data: response.data,
@@ -477,18 +477,18 @@ const createAllergyIntolerance = async (pasien, dokter, kunjungan, alergiPasien)
   try {
     const fhirClient = await createFhirClient();
     const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-    
+
     if (!orgId) {
       throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
     }
-    
+
     const payload = buildAllergyPayload(orgId, pasien, dokter, kunjungan, alergiPasien);
 
     // Cetak payload ke terminal
     console.log("[SATUSEHAT] Mengirim AllergyIntolerance Payload:", JSON.stringify(payload, null, 2));
 
     const response = await fhirClient.post('/AllergyIntolerance', payload);
-    
+
     return {
       success: true,
       data: response.data,
@@ -509,7 +509,7 @@ const searchKFA = async (keyword) => {
   try {
     const token = await generateAccessToken();
     const url = `${satusehatConfig.SATUSEHAT_URL.KFA_URL}/products/all`;
-    
+
     const response = await axios.get(url, {
       params: {
         product_type: 'farmasi',
@@ -521,7 +521,7 @@ const searchKFA = async (keyword) => {
         'Authorization': `Bearer ${token}`
       }
     });
-    
+
     return {
       success: true,
       data: response.data
@@ -540,7 +540,7 @@ const searchKFA = async (keyword) => {
 const postMedicationDispense = async (data) => {
   const fhirClient = await createFhirClient();
   const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-  
+
   if (!orgId) {
     throw new Error('SATUSEHAT_ORG_ID belum dikonfigurasi di file .env');
   }
@@ -655,7 +655,7 @@ const postMedicationDispense = async (data) => {
     locationName
   }, medicationId, orgId);
   console.log("[SATUSEHAT] Mengirim MedicationDispense Payload:", JSON.stringify(dispensePayload, null, 2));
-  
+
   try {
     const response = await fhirClient.post('/MedicationDispense', dispensePayload);
     return {
@@ -731,7 +731,7 @@ const postServiceRequest = async (data) => {
   try {
     const fhirClient = await createFhirClient();
     const orgId = satusehatConfig.SATUSEHAT_ORG_ID;
-    
+
     // Menerima parameter tambahan tipe request (default LAB, bisa ditimpa Rujukan/Radiologi)
     const type = data.requestType || "LAB";
     const payload = buildServiceRequestPayload(data, orgId, type);
@@ -772,10 +772,6 @@ module.exports = {
   createAllergyIntolerance,
   searchKFA,
   postMedicationDispense,
-<<<<<<< HEAD
-  createQuestionnaireResponse
-=======
   postQuestionnaireResponse,
   postServiceRequest
->>>>>>> 251f5e81bda75763bd2204a8f5d79c81a92ee683
 };

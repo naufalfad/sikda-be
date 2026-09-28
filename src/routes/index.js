@@ -20,8 +20,11 @@ const bpjsRoute = require('./bpjs.routes'); // [BARU] Import module BPJS PCare
 const referensiRoute = require('./referensi.routes'); // [BARU] Import module Referensi Enum
 const kodeposRoute = require('./kodepos.routes');
 const rujukanRoute = require('./rujukan.routes');
+const asetRuanganRoute = require('./asetRuangan.routes');
 const router = express.Router();
 const imunisasiRoute = require('./imunisasi.routes');
+
+const dinkesRoute = require('./dinkes.routes');
 
 const defaultRoutes = [
   {
@@ -111,6 +114,14 @@ const defaultRoutes = [
   {
     path: '/rujukan',
     route: rujukanRoute,
+  },
+  {
+    path: '/aset-ruangan',
+    route: asetRuanganRoute,
+  },
+  {
+    path: '/dinkes',
+    route: dinkesRoute,
   }
 ];
 

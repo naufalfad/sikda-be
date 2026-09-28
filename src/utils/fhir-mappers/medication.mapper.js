@@ -26,7 +26,7 @@ const buildMedicationPayload = (data, orgId, uniqueId = null) => {
     code: {
       coding: [
         {
-          system: "https://fhir.kemkes.go.id/id/kfa",
+          system: "http://sys-ids.kemkes.go.id/kfa",
           code: data.kodeObat, // Kode KFA (Kamus Farmasi dan Alat Kesehatan)
           display: data.namaObat
         }

@@ -192,6 +192,7 @@ const toRawatJalanBundle = (dataComplete = {}, orgId) => {
           ...(pasienIhs && { subject: { reference: formatRef('Patient', pasienIhs), display: pasienName } }),
           encounter: { reference: encounterRef },
           effectiveDateTime: new Date().toISOString(),
+          issued: new Date().toISOString(),
           valueString: noteText,
           ...(dokterIhs && { performer: [{ reference: formatRef('Practitioner', dokterIhs), display: dokterName }] })
         };
@@ -241,6 +242,7 @@ const toRawatJalanBundle = (dataComplete = {}, orgId) => {
       ...(pasienIhs && { subject: { reference: formatRef('Patient', pasienIhs), display: pasienName } }),
       encounter: { reference: encounterRef },
       effectiveDateTime: new Date().toISOString(),
+      issued: new Date().toISOString(),
       valueBoolean: true,
       ...(dokterIhs && { performer: [{ reference: formatRef('Practitioner', dokterIhs), display: dokterName }] })
     };
@@ -292,6 +294,7 @@ const toRawatJalanBundle = (dataComplete = {}, orgId) => {
           ...(pasienIhs && { subject: { reference: formatRef('Patient', pasienIhs), display: pasienName } }),
           encounter: { reference: encounterRef },
           effectiveDateTime: new Date().toISOString(),
+          issued: new Date().toISOString(),
           valueString: String(m.val),
           ...(dokterIhs && { performer: [{ reference: formatRef('Practitioner', dokterIhs), display: dokterName }] })
         };
@@ -339,6 +342,7 @@ const toRawatJalanBundle = (dataComplete = {}, orgId) => {
       ...(pasienIhs && { subject: { reference: formatRef('Patient', pasienIhs), display: pasienName } }),
       encounter: { reference: encounterRef },
       effectiveDateTime: new Date().toISOString(),
+      issued: new Date().toISOString(),
       valueQuantity: {
         value: parseFloat(bsaVal),
         unit: "m2",
@@ -389,6 +393,7 @@ const toRawatJalanBundle = (dataComplete = {}, orgId) => {
       ...(pasienIhs && { subject: { reference: formatRef('Patient', pasienIhs), display: pasienName } }),
       encounter: { reference: encounterRef },
       effectiveDateTime: new Date().toISOString(),
+      issued: new Date().toISOString(),
       valueCodeableConcept: {
         coding: [
           {
@@ -443,6 +448,7 @@ const toRawatJalanBundle = (dataComplete = {}, orgId) => {
       ...(pasienIhs && { subject: { reference: formatRef('Patient', pasienIhs), display: pasienName } }),
       encounter: { reference: encounterRef },
       effectiveDateTime: new Date().toISOString(),
+      issued: new Date().toISOString(),
       valueCodeableConcept: (() => {
         // Mapping AVPU Tingkat Kesadaran ke SNOMED CT yang valid
         const avpuMap = {

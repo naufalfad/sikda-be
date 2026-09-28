@@ -6,7 +6,7 @@ const prisma = require('../config/prisma');
 // 1. MASTER OBAT
 // ==========================================
 
-const getMasterObat = async (search) => {
+const getMasterObat = async (search, faskesId) => {
   const whereClause = search
     ? {
         OR: [
@@ -17,10 +17,27 @@ const getMasterObat = async (search) => {
       }
     : {};
 
-  return await prisma.masterObat.findMany({
+  const list = await prisma.masterObat.findMany({
     where: whereClause,
+    include: {
+      stokFaskes: faskesId ? { where: { faskesId } } : true,
+    },
     take: 100,
     orderBy: { namaObat: 'asc' },
+  });
+
+  return list.map(obat => {
+    let currentStok = 0;
+    if (faskesId) {
+      currentStok = obat.stokFaskes?.[0]?.stok ?? 0;
+    } else {
+      currentStok = obat.stokFaskes?.reduce((sum, s) => sum + (s.stok || 0), 0) ?? 0;
+    }
+    const { stokFaskes, ...rest } = obat;
+    return {
+      ...rest,
+      stok: currentStok,
+    };
   });
 };
 
@@ -32,7 +49,6 @@ const createMasterObat = async (data) => {
       kategori: data.kategori,
       sediaan: data.sediaan,
       harga: parseFloat(data.harga) || 0,
-      stok: parseInt(data.stok) || 0,
       gambarUrl: data.gambarUrl || null,
     },
   });
@@ -47,7 +63,6 @@ const updateMasterObat = async (id, data) => {
       kategori: data.kategori,
       sediaan: data.sediaan,
       harga: parseFloat(data.harga) || 0,
-      stok: parseInt(data.stok) || 0,
       gambarUrl: data.gambarUrl || null,
     },
   });

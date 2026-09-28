@@ -2,7 +2,7 @@ const klinikService = require('../services/klinik.service');
 
 const getPoliklinik = async (req, res, next) => {
   try {
-    const poli = await klinikService.getAllPoliklinik();
+    const poli = await klinikService.getAllPoliklinik(req.user, req.query.faskesId);
     res.json(poli);
   } catch (error) {
     next(error);
@@ -11,7 +11,8 @@ const getPoliklinik = async (req, res, next) => {
 
 const createPoliklinik = async (req, res, next) => {
   try {
-    const newPoli = await klinikService.createPoliklinik(req.body);
+    const faskesId = req.body.faskesId || req.user?.faskesId || null;
+    const newPoli = await klinikService.createPoliklinik({ ...req.body, faskesId });
     res.status(201).json(newPoli);
   } catch (error) {
     next(error);

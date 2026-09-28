@@ -6,35 +6,38 @@ async function main() {
   console.log('Menjalankan seeder untuk Poliklinik dan Dokter...');
 
   // 1. Buat Poliklinik
-  const poliUmum = await prisma.poliklinik.upsert({
-    where: { kodePoli: 'POLI-UMUM' },
-    update: {},
-    create: {
-      kodePoli: 'POLI-UMUM',
-      namaPoli: 'Poli Umum',
-      deskripsi: 'Pelayanan pemeriksaan umum',
-    },
-  });
+  let poliUmum = await prisma.poliklinik.findFirst({ where: { kodePoli: 'POLI-UMUM' } });
+  if (!poliUmum) {
+    poliUmum = await prisma.poliklinik.create({
+      data: {
+        kodePoli: 'POLI-UMUM',
+        namaPoli: 'Poli Umum',
+        deskripsi: 'Pelayanan pemeriksaan umum',
+      }
+    });
+  }
 
-  const poliGigi = await prisma.poliklinik.upsert({
-    where: { kodePoli: 'POLI-GIGI' },
-    update: {},
-    create: {
-      kodePoli: 'POLI-GIGI',
-      namaPoli: 'Poli Gigi',
-      deskripsi: 'Pelayanan kesehatan gigi dan mulut',
-    },
-  });
+  let poliGigi = await prisma.poliklinik.findFirst({ where: { kodePoli: 'POLI-GIGI' } });
+  if (!poliGigi) {
+    poliGigi = await prisma.poliklinik.create({
+      data: {
+        kodePoli: 'POLI-GIGI',
+        namaPoli: 'Poli Gigi',
+        deskripsi: 'Pelayanan kesehatan gigi dan mulut',
+      }
+    });
+  }
 
-  const poliKia = await prisma.poliklinik.upsert({
-    where: { kodePoli: 'POLI-KIA' },
-    update: {},
-    create: {
-      kodePoli: 'POLI-KIA',
-      namaPoli: 'Poli KIA (Ibu & Anak)',
-      deskripsi: 'Kesehatan Ibu dan Anak',
-    },
-  });
+  let poliKia = await prisma.poliklinik.findFirst({ where: { kodePoli: 'POLI-KIA' } });
+  if (!poliKia) {
+    poliKia = await prisma.poliklinik.create({
+      data: {
+        kodePoli: 'POLI-KIA',
+        namaPoli: 'Poli KIA (Ibu & Anak)',
+        deskripsi: 'Kesehatan Ibu dan Anak',
+      }
+    });
+  }
 
   // 2. Buat Data Dokter (Admin yang menginput, bukan daftar sendiri)
   const passwordHash = await bcrypt.hash('dokter123', 10);

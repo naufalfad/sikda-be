@@ -163,8 +163,7 @@ async function main() {
         namaObat: 'Paracetamol 500mg',
         kategori: 'Obat Bebas',
         sediaan: 'Tablet',
-        harga: 500,
-        stok: 500
+        harga: 500
       }
     });
   }
@@ -177,8 +176,7 @@ async function main() {
         namaObat: 'Amoxicillin 500mg',
         kategori: 'Obat Keras',
         sediaan: 'Tablet',
-        harga: 1000,
-        stok: 500
+        harga: 1000
       }
     });
   }
@@ -191,8 +189,7 @@ async function main() {
         namaObat: 'Asam Mefenamat 500mg',
         kategori: 'Obat Keras',
         sediaan: 'Tablet',
-        harga: 800,
-        stok: 500
+        harga: 800
       }
     });
   }

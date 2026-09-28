@@ -363,12 +363,14 @@ const createPasien = async (data) => {
           include: { tenagaMedis: true }
         });
 
-        if (dokter && dokter.tenagaMedis && dokter.tenagaMedis.noIHS && poliklinik && poliklinik.ihsLocationId) {
+        const effectiveDokterIhs = dokter?.tenagaMedis?.noIHS || process.env.SATUSEHAT_PRACTITIONER_IHS;
+
+        if (dokter && effectiveDokterIhs && poliklinik && poliklinik.ihsLocationId) {
           const encounterResult = await satusehatService.createEncounter({
             pasienIhs: effectiveIhs,
             pasienName: pasien.namaLengkap,
-            dokterIhs: dokter.tenagaMedis.noIHS,
-            dokterName: dokter.namaLengkap,
+            dokterIhs: effectiveDokterIhs,
+            dokterName: dokter.namaLengkap || 'Dokter Pemeriksa',
             poliIhs: poliklinik.ihsLocationId,
             poliName: poliklinik.namaPoli,
             noKunjungan: kunjungan.id,
