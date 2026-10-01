@@ -1,18 +1,22 @@
 const prisma = require('../config/prisma');
+const { applyFaskesScope } = require('../utils/tenantScope');
 
-const getAntrianKasir = async () => {
-  return await prisma.kunjungan.findMany({
-    where: {
-      OR: [
-        { statusKunjungan: 'MENUNGGU_KASIR' },
-        { 
-          statusKunjungan: 'MENUNGGU_FARMASI',
-          tagihan: {
-            statusTagihan: 'BELUM_LUNAS'
-          }
+const getAntrianKasir = async (user) => {
+  const where = {
+    OR: [
+      { statusKunjungan: 'MENUNGGU_KASIR' },
+      { 
+        statusKunjungan: 'MENUNGGU_FARMASI',
+        tagihan: {
+          statusTagihan: 'BELUM_LUNAS'
         }
-      ]
-    },
+      }
+    ]
+  };
+  applyFaskesScope(where, user);
+
+  return await prisma.kunjungan.findMany({
+    where,
     include: {
       pasien: {
         include: { penjamin: true }
@@ -245,11 +249,16 @@ const prosesPembayaran = async (tagihanId, userId, data) => {
   });
 };
 
-const getRiwayatKasir = async () => {
+const getRiwayatKasir = async (user) => {
+  const where = {
+    statusTagihan: 'LUNAS',
+  };
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
+    where.kunjungan = { faskesId: user.faskesId };
+  }
+
   return await prisma.tagihan.findMany({
-    where: {
-      statusTagihan: 'LUNAS',
-    },
+    where,
     include: {
       pasien: true,
       pembayaran: true,

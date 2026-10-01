@@ -4,8 +4,14 @@ const satusehatService = require('./satusehat.service');
 /**
  * Service untuk mengambil seluruh antrean rujukan keluar (untuk role Administrasi)
  */
-const getAntrianRujukan = async () => {
+const getAntrianRujukan = async (user) => {
+  const where = {};
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
+    where.kunjungan = { faskesId: user.faskesId };
+  }
+
   const rujukanList = await prisma.rujukanKeluar.findMany({
+    where,
     include: {
       pasien: true,
       dokter: true,

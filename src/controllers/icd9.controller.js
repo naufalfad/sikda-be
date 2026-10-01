@@ -3,11 +3,7 @@ const icd9Service = require('../services/icd9.service');
 const searchICD9 = async (req, res) => {
   try {
     const { q } = req.query;
-    if (!q) {
-      return res.status(400).json({ status: 'error', message: 'Query parameter q is required' });
-    }
-    
-    const results = await icd9Service.searchICD9(q);
+    const results = await icd9Service.searchICD9(q || '');
     res.json({
       status: 'success',
       data: results

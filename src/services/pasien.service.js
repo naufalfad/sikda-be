@@ -119,6 +119,7 @@ const createPasien = async (data) => {
       if (!ibuExisting) {
         await tx.pasien.create({
           data: {
+            faskesId: data.faskesId || null,
             noRM: `RM-IBU-${Math.floor(Math.random() * 1000000)}`,
             noIHS: ibuIhs || null,
             nik: data.nikIbu,
@@ -168,6 +169,7 @@ const createPasien = async (data) => {
     if (!pasien) {
       pasien = await tx.pasien.create({
         data: {
+          faskesId: data.faskesId || null,
           noRM: data.noRekamMedis,
           noIHS: newIhs || null,
           nik: data.nik || null,
@@ -245,6 +247,74 @@ const createPasien = async (data) => {
         }
       });
     } else {
+      // Perbarui data Master Pasien jika diperbaiki atau dilengkapi oleh loket
+      await tx.pasien.update({
+        where: { id: pasien.id },
+        data: {
+          ...(data.namaLengkap ? { namaLengkap: data.namaLengkap } : {}),
+          ...(data.noKk ? { noKk: data.noKk } : {}),
+          ...(data.tempatLahir ? { tempatLahir: data.tempatLahir } : {}),
+          ...(data.tanggalLahir ? { tanggalLahir: new Date(data.tanggalLahir) } : {}),
+          ...(data.jenisKelamin ? { jenisKelamin: data.jenisKelamin } : {}),
+          ...(data.golonganDarah !== undefined ? { golonganDarah: data.golonganDarah || null } : {}),
+          ...(data.rhesus !== undefined ? { rhesus: data.rhesus || null } : {}),
+          ...(data.agama ? { agama: data.agama } : {}),
+          ...(data.pendidikan !== undefined ? { pendidikan: data.pendidikan || null } : {}),
+          ...(data.pekerjaan ? { pekerjaan: data.pekerjaan } : {}),
+          ...(data.statusPerkawinan ? { statusPerkawinan: data.statusPerkawinan } : {}),
+          ...(data.kewarganegaraan ? { kewarganegaraan: data.kewarganegaraan } : {}),
+          ...(newIhs ? { noIHS: newIhs } : (data.noIHS ? { noIHS: data.noIHS } : {}))
+        }
+      });
+
+      if (data.alamatKtp) {
+        await tx.alamatPasien.upsert({
+          where: { pasienId: pasien.id },
+          create: {
+            pasienId: pasien.id,
+            alamatKtp: data.alamatKtp,
+            alamatDomisili: data.alamatDomisili || data.alamatKtp,
+            rtRw: data.rtRw || '001/001',
+            desaKelurahan: data.desaKelurahan || '-',
+            kecamatan: data.kecamatan || '-',
+            kabupatenKota: data.kabupatenKota || '-',
+            provinsi: data.provinsi || '-',
+            kodePos: data.kodePos || '-'
+          },
+          update: {
+            alamatKtp: data.alamatKtp,
+            alamatDomisili: data.alamatDomisili || data.alamatKtp,
+            ...(data.rtRw ? { rtRw: data.rtRw } : {}),
+            ...(data.desaKelurahan ? { desaKelurahan: data.desaKelurahan } : {}),
+            ...(data.kecamatan ? { kecamatan: data.kecamatan } : {}),
+            ...(data.kabupatenKota ? { kabupatenKota: data.kabupatenKota } : {}),
+            ...(data.provinsi ? { provinsi: data.provinsi } : {}),
+            ...(data.kodePos ? { kodePos: data.kodePos } : {})
+          }
+        });
+      }
+
+      if (data.noHp) {
+        await tx.kontakPasien.upsert({
+          where: { pasienId: pasien.id },
+          create: {
+            pasienId: pasien.id,
+            noHp: data.noHp,
+            email: data.email || null,
+            kontakDarurat: data.kontakDarurat || '-',
+            hubunganKontakDarurat: data.hubunganKontakDarurat || '-',
+            noHpDarurat: data.noHpDarurat || '-'
+          },
+          update: {
+            noHp: data.noHp,
+            ...(data.email !== undefined ? { email: data.email || null } : {}),
+            ...(data.kontakDarurat ? { kontakDarurat: data.kontakDarurat } : {}),
+            ...(data.hubunganKontakDarurat ? { hubunganKontakDarurat: data.hubunganKontakDarurat } : {}),
+            ...(data.noHpDarurat ? { noHpDarurat: data.noHpDarurat } : {})
+          }
+        });
+      }
+
       // Jika pasien sudah ada, namun mendaftar sebagai bayi, buat/update DataBayi-nya
       if (data.isBayi || Boolean(data.nikIbu)) {
         await tx.dataBayi.upsert({
@@ -280,6 +350,12 @@ const createPasien = async (data) => {
     // 0. Generate Nomor Antrean (Opsional jika poliTujuan ada)
     let kunjungan = null;
     if (data.poliTujuan) {
+      if (!data.dokterTujuan || data.dokterTujuan === 'Bebas') {
+        const error = new Error('Dokter tujuan wajib dipilih dan tidak boleh kosong.');
+        error.statusCode = 400;
+        throw error;
+      }
+
       const poliklinik = await tx.poliklinik.findUnique({
         where: { id: data.poliTujuan }
       });
@@ -300,11 +376,12 @@ const createPasien = async (data) => {
     });
 
     const urutan = countHariIni + 1;
-    const generatedNoAntrian = `${prefix}-${urutan.toString().padStart(3, '0')}`;
+    const generatedNoAntrian = data.noAntrian || `${prefix}-${urutan.toString().padStart(3, '0')}`;
 
     // 2. Buat Kunjungan
-    const kunjungan = await tx.kunjungan.create({
+    kunjungan = await tx.kunjungan.create({
       data: {
+        faskesId: data.faskesId || null,
         pasienId: pasien.id,
         tanggalRegistrasi: new Date(data.tanggalRegistrasi),
         jamRegistrasi: data.jamRegistrasi,
@@ -316,7 +393,7 @@ const createPasien = async (data) => {
         prioritas: data.prioritas,
         caraDatang: data.caraDatang,
         
-        dokterTujuanId: data.dokterTujuan === 'Bebas' ? null : data.dokterTujuan,
+        dokterTujuanId: data.dokterTujuan,
         userPendaftarId: data.userPendaftarId || null,
         noSep: data.noSep,
         statusKunjungan: "MENUNGGU",
@@ -339,12 +416,12 @@ const createPasien = async (data) => {
         // Persetujuan Medis
         persetujuan: {
           create: {
-            persetujuanPengobatan: data.persetujuanPengobatan,
-            persetujuanRekamMedis: data.persetujuanRekamMedis,
-            persetujuanSatusehat: data.persetujuanSatusehat,
+            persetujuanPengobatan: data.persetujuanPengobatan !== undefined ? Boolean(data.persetujuanPengobatan) : true,
+            persetujuanRekamMedis: data.persetujuanRekamMedis !== undefined ? Boolean(data.persetujuanRekamMedis) : true,
+            persetujuanSatusehat: Boolean(data.persetujuanSatusehat),
             persetujuanReminder: data.persetujuanReminder || false,
-            // Simpan URL dari Cloudinary
-            tandaTangan: tandaTanganUrl
+            // Simpan URL dari Cloudinary atau persetujuan aktif
+            tandaTangan: tandaTanganUrl || 'PERSETUJUAN_RME_AKTIF'
           }
         }
       },
@@ -356,7 +433,7 @@ const createPasien = async (data) => {
 
     // 3. Create Encounter di SATUSEHAT
     const effectiveIhs = newIhs || pasien.noIHS;
-    if (data.persetujuanSatusehat && effectiveIhs && data.dokterTujuan !== 'Bebas') {
+    if (data.persetujuanSatusehat && effectiveIhs && data.dokterTujuan) {
       try {
         const dokter = await tx.user.findUnique({
           where: { id: data.dokterTujuan },
@@ -453,15 +530,47 @@ const createPasien = async (data) => {
       }
     }
 
+    // Update status booking online jika pendaftaran berhasil diproses loket
+    if (data.nik) {
+      await tx.bookingAntreanOnline.updateMany({
+        where: {
+          nik: data.nik,
+          statusBooking: 'TERKONFIRMASI'
+        },
+        data: {
+          statusBooking: 'CHECKED_IN'
+        }
+      });
+    }
+
     return { ...pasien, kunjungan };
   });
 
   return newPasien;
 };
 
-const getAllPasien = async () => {
+const getAllPasien = async (user, requestedFaskesId) => {
+  const isDinkes = user && ['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role);
+  const effectiveFaskesId = isDinkes ? (requestedFaskesId || null) : (user?.faskesId || requestedFaskesId || null);
+
+  const where = {};
+  if (effectiveFaskesId) {
+    where.OR = [
+      { faskesId: effectiveFaskesId },
+      { kunjungans: { some: { faskesId: effectiveFaskesId } } }
+    ];
+  }
+
   return await prisma.pasien.findMany({
+    where,
     include: {
+      faskes: {
+        select: {
+          id: true,
+          namaFaskes: true,
+          kodeFaskes: true
+        }
+      },
       alamat: true,
       kontak: true,
       sosial: true,
@@ -474,27 +583,119 @@ const getAllPasien = async () => {
   });
 };
 
-const searchPasien = async (query) => {
-  return await prisma.pasien.findFirst({
-    where: {
+const searchPasien = async (query, user, requestedFaskesId) => {
+  const isDinkes = user && ['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role);
+  const effectiveFaskesId = isDinkes ? (requestedFaskesId || null) : (user?.faskesId || requestedFaskesId || null);
+
+  const where = {
+    AND: [
+      {
+        OR: [
+          { nik: query },
+          { noRM: query }
+        ]
+      }
+    ]
+  };
+
+  if (effectiveFaskesId) {
+    where.AND.push({
       OR: [
-        { nik: query },
-        { noRM: query }
+        { faskesId: effectiveFaskesId },
+        { kunjungans: { some: { faskesId: effectiveFaskesId } } }
       ]
-    },
+    });
+  }
+
+  const pasien = await prisma.pasien.findFirst({
+    where,
     include: {
+      faskes: {
+        select: {
+          id: true,
+          namaFaskes: true,
+          kodeFaskes: true
+        }
+      },
       alamat: true,
       kontak: true,
       sosial: true,
       penjamin: true,
       dataBayi: true,
+      kunjungans: {
+        include: {
+          persetujuan: true
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 3
+      }
     }
   });
+
+  if (pasien) {
+    // Cek apakah pasien sudah pernah memberikan persetujuan (consent) sebelumnya
+    const prevConsent = pasien.kunjungans?.find(k => k.persetujuan);
+    pasien.hasPersetujuanSebelumnya = Boolean(prevConsent || pasien.fotoWajah || (pasien.kunjungans && pasien.kunjungans.length > 0));
+    if (prevConsent?.persetujuan) {
+      pasien.persetujuanSebelumnya = prevConsent.persetujuan;
+    }
+
+    if (pasien.nik) {
+    const booking = await prisma.bookingAntreanOnline.findFirst({
+      where: {
+        nik: pasien.nik,
+        ...(effectiveFaskesId ? { faskesId: effectiveFaskesId } : {}),
+        statusBooking: 'TERKONFIRMASI'
+      },
+      include: {
+        poliklinik: true,
+        dokter: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (booking) {
+      pasien.bookingAktif = {
+        id: booking.id,
+        kodeBooking: booking.kodeBooking,
+        poliklinikId: booking.poliklinikId,
+        namaPoli: booking.poliklinik?.namaPoli,
+        dokterId: booking.dokterId,
+        namaDokter: booking.dokter?.namaLengkap,
+        keluhan: booking.keluhan,
+        noAntrian: booking.noAntrian,
+        tanggalKunjungan: booking.tanggalKunjungan
+      };
+    }
+  }
+  }
+
+  return pasien;
 };
 
-const updatePasien = async (id, data) => {
+const updatePasien = async (id, data, user) => {
+  const isDinkes = user && ['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role);
+  const effectiveFaskesId = isDinkes ? null : user?.faskesId;
+
+  if (effectiveFaskesId) {
+    const existing = await prisma.pasien.findFirst({
+      where: {
+        id: String(id),
+        OR: [
+          { faskesId: effectiveFaskesId },
+          { kunjungans: { some: { faskesId: effectiveFaskesId } } }
+        ]
+      }
+    });
+    if (!existing) {
+      const error = new Error('Pasien tidak ditemukan atau bukan milik fasilitas kesehatan Anda');
+      error.statusCode = 403;
+      throw error;
+    }
+  }
+
   return await prisma.pasien.update({
-    where: { id: parseInt(id) },
+    where: { id: String(id) },
     data: data,
     include: {
       alamat: true,
@@ -505,13 +706,29 @@ const updatePasien = async (id, data) => {
   });
 };
 
-const deletePasien = async (id) => {
-  // Gunakan transaction untuk menghapus relasi jika onDelete: Cascade belum diatur di skema Prisma
-  // Jika schema.prisma menggunakan onDelete: Cascade, kita bisa langsung delete pasien.
-  // Untuk amannya kita delete pasien langsung (Prisma akan error jika ada relasi tanpa cascade, 
-  // yang bisa berguna sebagai proteksi)
+const deletePasien = async (id, user) => {
+  const isDinkes = user && ['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role);
+  const effectiveFaskesId = isDinkes ? null : user?.faskesId;
+
+  if (effectiveFaskesId) {
+    const existing = await prisma.pasien.findFirst({
+      where: {
+        id: String(id),
+        OR: [
+          { faskesId: effectiveFaskesId },
+          { kunjungans: { some: { faskesId: effectiveFaskesId } } }
+        ]
+      }
+    });
+    if (!existing) {
+      const error = new Error('Pasien tidak ditemukan atau bukan milik fasilitas kesehatan Anda');
+      error.statusCode = 403;
+      throw error;
+    }
+  }
+
   return await prisma.pasien.delete({
-    where: { id: parseInt(id) }
+    where: { id: String(id) }
   });
 };
 

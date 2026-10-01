@@ -22,7 +22,7 @@ const radiologiController = {
   // 2. GET /api/radiologi/order (Daftar antrian & riwayat order)
   getOrders: async (req, res, next) => {
     try {
-      const result = await radiologiService.getAllOrders(req.query);
+      const result = await radiologiService.getAllOrders(req.query, req.user);
       res.status(200).json({
         success: true,
         data: result,

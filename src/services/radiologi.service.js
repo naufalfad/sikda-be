@@ -69,10 +69,14 @@ const radiologiService = {
   /**
    * 2. Mengambil daftar order radiologi dengan filter
    */
-  getAllOrders: async (query = {}) => {
+  getAllOrders: async (query = {}, user = null) => {
     const { status, kunjunganId, search } = query;
 
     const whereClause = {};
+
+    if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
+      whereClause.kunjungan = { faskesId: user.faskesId };
+    }
 
     if (status) {
       whereClause.status = status;

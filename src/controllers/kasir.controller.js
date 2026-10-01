@@ -2,7 +2,7 @@ const kasirService = require('../services/kasir.service');
 
 const getAntrianKasir = async (req, res, next) => {
   try {
-    const antrian = await kasirService.getAntrianKasir();
+    const antrian = await kasirService.getAntrianKasir(req.user);
     res.json({ success: true, data: antrian });
   } catch (error) {
     next(error);
@@ -11,7 +11,7 @@ const getAntrianKasir = async (req, res, next) => {
 
 const getRiwayatKasir = async (req, res, next) => {
   try {
-    const riwayat = await kasirService.getRiwayatKasir();
+    const riwayat = await kasirService.getRiwayatKasir(req.user);
     res.json({ success: true, data: riwayat });
   } catch (error) {
     next(error);

@@ -2,7 +2,7 @@ const dokterService = require('../services/dokter.service');
 
 exports.getAllDokter = async (req, res) => {
   try {
-    const dokters = await dokterService.getAllDokter();
+    const dokters = await dokterService.getAllDokter(req.user, req.query.faskesId);
     // Exclude passwords
     const safeDokters = dokters.map((d) => {
       const { password, ...rest } = d;
@@ -17,7 +17,7 @@ exports.getAllDokter = async (req, res) => {
 
 exports.createDokter = async (req, res) => {
   try {
-    const newDokter = await dokterService.createDokter(req.body);
+    const newDokter = await dokterService.createDokter(req.body, req.user);
     const { password, ...safeDokter } = newDokter;
     res.status(201).json(safeDokter);
   } catch (error) {
@@ -29,7 +29,7 @@ exports.createDokter = async (req, res) => {
 exports.updateDokter = async (req, res) => {
   try {
     const { id } = req.params;
-    const updatedDokter = await dokterService.updateDokter(id, req.body);
+    const updatedDokter = await dokterService.updateDokter(id, req.body, req.user);
     const { password, ...safeDokter } = updatedDokter;
     res.json(safeDokter);
   } catch (error) {
@@ -41,7 +41,7 @@ exports.updateDokter = async (req, res) => {
 exports.deleteDokter = async (req, res) => {
   try {
     const { id } = req.params;
-    await dokterService.deleteDokter(id);
+    await dokterService.deleteDokter(id, req.user);
     res.json({ message: 'Dokter berhasil dihapus' });
   } catch (error) {
     console.error(error);

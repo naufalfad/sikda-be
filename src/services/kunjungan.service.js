@@ -6,16 +6,13 @@ const { applyFaskesScope } = require('../utils/tenantScope');
  */
 const getKunjunganScreening = async (user) => {
   const whereClause = {
-    statusKunjungan: 'MENUNGGU',
+    statusKunjungan: { in: ['MENUNGGU', 'DIPROSES_SCREENING'] },
   };
 
   // Filter isolasi data multi-tenant Faskes:
   applyFaskesScope(whereClause, user);
 
-  // Filter isolasi data: Perawat hanya melihat antrian di Polinya
-  if (user && user.role === 'PERAWAT' && user.poliklinikId) {
-    whereClause.poliklinikId = user.poliklinikId;
-  }
+  // Puskesmas: Pemeriksaan awal / screening perawat melayani semua poli di faskes ini
 
   const kunjungans = await prisma.kunjungan.findMany({
     where: whereClause,
@@ -208,7 +205,10 @@ const getDashboardStats = async (user) => {
 
   // 3. Antrian Hari Ini
   const antreanHariIni = await prisma.kunjungan.findMany({
-    where: { tanggalRegistrasi: { gte: today, lt: tomorrow } },
+    where: {
+      ...baseWhere,
+      tanggalRegistrasi: { gte: today, lt: tomorrow }
+    },
     include: {
       pasien: {
         include: { penjamin: true }
@@ -223,7 +223,14 @@ const getDashboardStats = async (user) => {
   });
 
   // 4. Poli List with counts
-  const polis = await prisma.poliklinik.findMany();
+  const polis = await prisma.poliklinik.findMany({
+    where: baseWhere.faskesId ? {
+      OR: [
+        { faskesId: baseWhere.faskesId },
+        { faskesId: null }
+      ]
+    } : {}
+  });
   const statusPoli = polis.map(p => {
     const count = allKunjunganToday.filter(k => k.poliklinikId === p.id).length;
     return {
@@ -240,6 +247,7 @@ const getDashboardStats = async (user) => {
 
   const last7DaysData = await prisma.kunjungan.findMany({
     where: {
+      ...baseWhere,
       tanggalRegistrasi: {
         gte: sevenDaysAgo,
         lt: tomorrow
@@ -303,8 +311,8 @@ const getPerawatDashboardStats = async (user) => {
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  // Filter isolasi data: Perawat hanya melihat antrean di Polinya & Faskesnya
-  const poliFilter = user && user.poliklinikId ? { poliklinikId: user.poliklinikId } : {};
+  // Filter isolasi data: Perawat di Puskesmas memonitor antrean seluruh poli di faskesnya
+  const poliFilter = {};
   applyFaskesScope(poliFilter, user);
 
   // 1. Stats Hari Ini (Khusus Poli ybs)
@@ -329,12 +337,19 @@ const getPerawatDashboardStats = async (user) => {
   const antreanAktif = allKunjunganPoli.filter(k => k.statusKunjungan === 'MENUNGGU' || k.statusKunjungan === 'DIPROSES_SCREENING');
 
   const belumSkrining = allKunjunganPoli.filter(k => k.statusKunjungan === 'MENUNGGU').length;
+  const sedangSkrining = allKunjunganPoli.filter(k => k.statusKunjungan === 'DIPROSES_SCREENING').length;
   const sudahSkrining = allKunjunganPoli.filter(k =>
-    k.statusKunjungan === 'DIPERIKSA' ||
-    k.statusKunjungan === 'SELESAI' ||
-    k.statusKunjungan === 'MENUNGGU_KASIR' ||
-    k.statusKunjungan === 'MENUNGGU_FARMASI' ||
-    k.statusKunjungan === 'PULANG'
+    Boolean(k.screening) ||
+    [
+      'MENUNGGU_DOKTER',
+      'DIPERIKSA',
+      'MENUNGGU_LAB',
+      'MENUNGGU_RADIOLOGI',
+      'MENUNGGU_KASIR',
+      'MENUNGGU_FARMASI',
+      'SELESAI',
+      'PULANG'
+    ].includes(k.statusKunjungan)
   ).length;
 
   // 2. Data Triage (Khusus Poli ybs, yang sudah discrining)
@@ -359,6 +374,7 @@ const getPerawatDashboardStats = async (user) => {
     stats: {
       totalAntrean,
       belumSkrining,
+      sedangSkrining,
       sudahSkrining
     },
     triage,

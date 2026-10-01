@@ -179,7 +179,7 @@ const syncDeviceSatuSehat = async (req, res, next) => {
 // Pemeliharaan & Kalibrasi
 const getPemeliharaans = async (req, res, next) => {
   try {
-    const data = await asetRuanganService.getPemeliharaans(req.query);
+    const data = await asetRuanganService.getPemeliharaans(req.query, req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
@@ -188,7 +188,7 @@ const getPemeliharaans = async (req, res, next) => {
 
 const getKalibrasiAlerts = async (req, res, next) => {
   try {
-    const data = await asetRuanganService.getKalibrasiAlerts();
+    const data = await asetRuanganService.getKalibrasiAlerts(req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
@@ -216,7 +216,7 @@ const updatePemeliharaan = async (req, res, next) => {
 // Mutasi Aset
 const getMutasiHistory = async (req, res, next) => {
   try {
-    const data = await asetRuanganService.getMutasiHistory(req.query.asetId);
+    const data = await asetRuanganService.getMutasiHistory(req.query.asetId, req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

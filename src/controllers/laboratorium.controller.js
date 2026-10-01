@@ -30,7 +30,7 @@ const createOrder = async (req, res) => {
 
 const getAntrian = async (req, res, next) => {
   try {
-    const data = await laboratoriumService.getAntrianLab();
+    const data = await laboratoriumService.getAntrianLab(req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

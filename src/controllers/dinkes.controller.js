@@ -70,6 +70,20 @@ const getMedicineStockAlerts = async (req, res, next) => {
   }
 };
 
+// 5B. Monitoring Logistik & Stok Vaksin Cold-Chain
+const getVaccineMonitoring = async (req, res, next) => {
+  try {
+    const data = await dinkesService.getVaccineMonitoring(req.query);
+    res.status(200).json({
+      success: true,
+      message: 'Berhasil memuat monitoring stok dan cold-chain vaksin daerah',
+      data
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // 6. Surveilans Epidemiologi (10 Besar Penyakit se-Kabupaten)
 const getDiseaseSurveillance = async (req, res, next) => {
   try {
@@ -182,6 +196,7 @@ module.exports = {
   getBedMonitoring,
   getCriticalAssetsMonitoring,
   getMedicineStockAlerts,
+  getVaccineMonitoring,
   getDiseaseSurveillance,
   getFaskesList,
   getFaskesById,

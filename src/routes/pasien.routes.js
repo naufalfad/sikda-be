@@ -4,7 +4,10 @@ const { protect } = require('../middlewares/auth.middleware');
 
 const router = express.Router();
 
-router.post('/', protect, pasienController.createPasien);
+// Semua API Master Pasien wajib login
+router.use(protect);
+
+router.post('/', pasienController.createPasien);
 router.get('/search', pasienController.searchPasien);
 router.get('/', pasienController.getAllPasien);
 router.put('/:id', pasienController.updatePasien);

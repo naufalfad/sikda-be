@@ -274,9 +274,29 @@ exports.getStokFaskes = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Faskes ID tidak ditemukan pada sesi pengguna.' });
     }
 
+    const { search, hanyaObat, kategori } = req.query;
+
     const where = {};
     if (faskesId) {
       where.faskesId = faskesId;
+    }
+
+    const obatWhere = {};
+    if (hanyaObat === 'true') {
+      obatWhere.kategori = { not: 'BMHP' };
+    } else if (kategori) {
+      obatWhere.kategori = kategori;
+    }
+
+    if (search) {
+      obatWhere.OR = [
+        { namaObat: { contains: search, mode: 'insensitive' } },
+        { kodeObat: { contains: search, mode: 'insensitive' } }
+      ];
+    }
+
+    if (Object.keys(obatWhere).length > 0) {
+      where.obat = obatWhere;
     }
 
     const stokList = await prisma.stokObatFaskes.findMany({
@@ -342,6 +362,7 @@ exports.getStokFaskes = async (req, res) => {
     formatted.sort((a, b) => a.prioritasFEFO - b.prioritasFEFO);
 
     res.json({
+      success: true,
       status: 'success',
       data: formatted,
       ringkasan: {
@@ -410,3 +431,276 @@ exports.tambahStokMasuk = async (req, res) => {
     res.status(500).json({ status: 'error', message: error.message || 'Gagal menambahkan stok obat.' });
   }
 };
+
+// 6. Get Stok Vaksin Faskes dengan Analisis FEFO & Suhu Cold-Chain
+exports.getStokVaksinFaskes = async (req, res) => {
+  try {
+    const faskesId = req.user?.faskesId;
+    if (!faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(req.user?.role)) {
+      return res.status(400).json({ status: 'error', message: 'Faskes ID tidak ditemukan pada sesi pengguna.' });
+    }
+
+    const where = {};
+    if (faskesId) {
+      where.faskesId = faskesId;
+    }
+
+    const batchList = await prisma.batchVaksin.findMany({
+      where,
+      include: {
+        vaksin: true,
+        faskes: { select: { id: true, namaFaskes: true, kodeFaskes: true } }
+      },
+      orderBy: [
+        { tanggalExpired: 'asc' },
+        { stok: 'asc' }
+      ]
+    });
+
+    const now = new Date();
+    const formatted = batchList.map((item) => {
+      let sisaHariExpired = null;
+      let statusExpired = 'AMAN';
+
+      if (item.tanggalExpired) {
+        const expDate = new Date(item.tanggalExpired);
+        const diffMs = expDate.getTime() - now.getTime();
+        sisaHariExpired = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+        if (sisaHariExpired < 0) {
+          statusExpired = 'KADALUWARSA';
+        } else if (sisaHariExpired <= 60) {
+          statusExpired = 'SEGERA_KADALUWARSA';
+        } else if (sisaHariExpired <= 90) {
+          statusExpired = 'WASPADA';
+        }
+      }
+
+      let statusStok = 'AMAN';
+      if (item.stok === 0) {
+        statusStok = 'HABIS';
+      } else if (item.stok <= item.stokMinimum) {
+        statusStok = 'KRITIS';
+      }
+
+      return {
+        id: item.id,
+        faskesId: item.faskesId,
+        namaFaskes: item.faskes?.namaFaskes,
+        vaksinId: item.vaksinId,
+        kodeKfa: item.vaksin?.kodeKfa,
+        namaVaksin: item.vaksin?.namaVaksin,
+        targetPenyakit: item.vaksin?.targetPenyakit,
+        noBatch: item.noBatch,
+        tanggalExpired: item.tanggalExpired,
+        sisaHariExpired,
+        statusExpired,
+        stok: item.stok,
+        stokMinimum: item.stokMinimum,
+        suhuPenyimpanan: item.suhuPenyimpanan || '2-8°C',
+        statusStok,
+        prioritasFEFO: statusExpired === 'KADALUWARSA' ? 1 : (statusExpired === 'SEGERA_KADALUWARSA' ? 2 : (statusExpired === 'WASPADA' ? 3 : 4))
+      };
+    });
+
+    formatted.sort((a, b) => a.prioritasFEFO - b.prioritasFEFO);
+
+    res.json({
+      status: 'success',
+      data: formatted,
+      ringkasan: {
+        totalBatch: formatted.length,
+        totalDosis: formatted.reduce((sum, item) => sum + item.stok, 0),
+        kritisCount: formatted.filter(f => f.statusStok === 'KRITIS' || f.statusStok === 'HABIS').length,
+        segeraExpiredCount: formatted.filter(f => f.statusExpired === 'SEGERA_KADALUWARSA' || f.statusExpired === 'KADALUWARSA').length
+      }
+    });
+  } catch (error) {
+    console.error('Error in getStokVaksinFaskes:', error);
+    res.status(500).json({ status: 'error', message: 'Gagal mengambil data stok vaksin faskes' });
+  }
+};
+
+// 7. Tambah Penerimaan Batch Vaksin Baru (Droping Bio Farma / Dinkes)
+exports.tambahStokVaksinMasuk = async (req, res) => {
+  try {
+    const faskesId = req.user?.faskesId;
+    if (!faskesId) {
+      return res.status(400).json({ status: 'error', message: 'Hanya petugas faskes yang dapat menambah stok vaksin faskes.' });
+    }
+
+    const { vaksinId, jumlahMasuk, noBatch, tanggalExpired, stokMinimum, suhuPenyimpanan } = req.body;
+
+    if (!vaksinId || !jumlahMasuk || parseInt(jumlahMasuk) <= 0 || !noBatch || !tanggalExpired) {
+      return res.status(400).json({ status: 'error', message: 'Vaksin, No Batch, Tanggal Expired, dan Jumlah Dosis valid wajib diisi.' });
+    }
+
+    const qty = parseInt(jumlahMasuk);
+    const minStock = stokMinimum !== undefined ? parseInt(stokMinimum) : 10;
+    const expDate = new Date(tanggalExpired);
+
+    const batchUpdated = await prisma.batchVaksin.upsert({
+      where: {
+        faskesId_vaksinId_noBatch: {
+          faskesId,
+          vaksinId,
+          noBatch
+        }
+      },
+      update: {
+        stok: { increment: qty },
+        tanggalExpired: expDate,
+        stokMinimum: minStock,
+        suhuPenyimpanan: suhuPenyimpanan || '2-8°C'
+      },
+      create: {
+        faskesId,
+        vaksinId,
+        noBatch,
+        tanggalExpired: expDate,
+        stok: qty,
+        stokMinimum: minStock,
+        suhuPenyimpanan: suhuPenyimpanan || '2-8°C'
+      },
+      include: {
+        vaksin: true
+      }
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Berhasil mencatat penerimaan ${qty} dosis untuk ${batchUpdated.vaksin?.namaVaksin} (Batch: ${noBatch}).`,
+      data: batchUpdated
+    });
+  } catch (error) {
+    console.error('Error in tambahStokVaksinMasuk:', error);
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal mencatat penerimaan vaksin.' });
+  }
+};
+
+// 8. Pengurangan / Pengeluaran Stok Obat & BMHP Manual
+// (Pemakaian Ruangan / Amprahan, Rusak, Kadaluwarsa, Penyesuaian Stok Opname, Retur)
+exports.kurangiStokKeluar = async (req, res) => {
+  try {
+    const faskesId = req.user?.faskesId;
+    if (!faskesId) {
+      return res.status(400).json({ status: 'error', message: 'Hanya petugas faskes yang dapat mencatat pengeluaran stok.' });
+    }
+
+    const { obatId, jumlahKeluar, alasanKeluar, catatan } = req.body;
+
+    if (!obatId || !jumlahKeluar || parseInt(jumlahKeluar) <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Obat dan jumlah pengeluaran valid wajib diisi.' });
+    }
+
+    const qty = parseInt(jumlahKeluar);
+
+    const existing = await prisma.stokObatFaskes.findUnique({
+      where: {
+        faskesId_obatId: {
+          faskesId,
+          obatId
+        }
+      },
+      include: { obat: true }
+    });
+
+    if (!existing) {
+      return res.status(404).json({ status: 'error', message: 'Item obat/BMHP ini belum terdaftar di faskes Anda.' });
+    }
+
+    if (existing.stok < qty) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Stok ${existing.obat?.namaObat} tidak mencukupi untuk dikeluarkan. Sisa stok tersedia: ${existing.stok}, diminta: ${qty}.`
+      });
+    }
+
+    const updated = await prisma.stokObatFaskes.update({
+      where: {
+        faskesId_obatId: {
+          faskesId,
+          obatId
+        }
+      },
+      data: {
+        stok: { decrement: qty }
+      },
+      include: { obat: true }
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Berhasil mengeluarkan ${qty} ${updated.obat?.sediaan || 'unit'} untuk ${updated.obat?.namaObat}. Alasan: ${alasanKeluar || 'Pengeluaran Stok'}. Sisa stok: ${updated.stok}.`,
+      data: updated
+    });
+  } catch (error) {
+    console.error('Error in kurangiStokKeluar:', error);
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal memproses pengurangan stok.' });
+  }
+};
+
+// 9. Pengurangan / Pengeluaran Batch Vaksin Manual
+// (Distribusi Posyandu, Kerusakan Cold-Chain, Kadaluwarsa, Penyesuaian Stok Opname, Retur)
+exports.kurangiStokVaksinKeluar = async (req, res) => {
+  try {
+    const faskesId = req.user?.faskesId;
+    if (!faskesId) {
+      return res.status(400).json({ status: 'error', message: 'Hanya petugas faskes yang dapat mencatat pengeluaran vaksin.' });
+    }
+
+    const { vaksinId, noBatch, jumlahKeluar, alasanKeluar, catatan } = req.body;
+
+    if (!vaksinId || !noBatch || !jumlahKeluar || parseInt(jumlahKeluar) <= 0) {
+      return res.status(400).json({ status: 'error', message: 'Vaksin, No Batch, dan jumlah dosis pengeluaran valid wajib diisi.' });
+    }
+
+    const qty = parseInt(jumlahKeluar);
+
+    const existing = await prisma.batchVaksin.findUnique({
+      where: {
+        faskesId_vaksinId_noBatch: {
+          faskesId,
+          vaksinId,
+          noBatch
+        }
+      },
+      include: { vaksin: true }
+    });
+
+    if (!existing) {
+      return res.status(404).json({ status: 'error', message: `Batch ${noBatch} untuk vaksin ini tidak ditemukan.` });
+    }
+
+    if (existing.stok < qty) {
+      return res.status(400).json({
+        status: 'error',
+        message: `Stok vaksin batch ${noBatch} tidak mencukupi. Sisa dosis: ${existing.stok}, diminta: ${qty}.`
+      });
+    }
+
+    const updated = await prisma.batchVaksin.update({
+      where: {
+        faskesId_vaksinId_noBatch: {
+          faskesId,
+          vaksinId,
+          noBatch
+        }
+      },
+      data: {
+        stok: { decrement: qty }
+      },
+      include: { vaksin: true }
+    });
+
+    res.status(200).json({
+      status: 'success',
+      message: `Berhasil mengeluarkan ${qty} dosis ${updated.vaksin?.namaVaksin} (Batch: ${noBatch}). Alasan: ${alasanKeluar || 'Pengeluaran Vaksin'}. Sisa dosis: ${updated.stok}.`,
+      data: updated
+    });
+  } catch (error) {
+    console.error('Error in kurangiStokVaksinKeluar:', error);
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal memproses pengurangan stok vaksin.' });
+  }
+};
+

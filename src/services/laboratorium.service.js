@@ -41,11 +41,16 @@ const createOrderLab = async (data) => {
   return newOrder;
 };
 
-const getAntrianLab = async () => {
+const getAntrianLab = async (user) => {
+  const where = {
+    status: { in: ['MENUNGGU_SAMPEL', 'DIPROSES'] }
+  };
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
+    where.kunjungan = { faskesId: user.faskesId };
+  }
+
   return await prisma.orderLaboratorium.findMany({
-    where: {
-      status: { in: ['MENUNGGU_SAMPEL', 'DIPROSES'] }
-    },
+    where,
     include: {
       pasien: true,
       dokter: { select: { id: true, namaLengkap: true } },

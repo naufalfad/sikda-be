@@ -58,11 +58,16 @@ model User {
   // Relasi Aset & Ruangan
   ruanganPj         MasterRuangan[]     @relation("PjRuangan")
   mutasiAsetPetugas RiwayatMutasiAset[] @relation("PetugasMutasiAset")
+
+  // Relasi Booking Antrean Online
+  bookingsOnline    BookingAntreanOnline[] @relation("DokterBookingOnline")
 }
 
 // 1. Data Induk Pasien
 model Pasien {
   id             String  @id @default(cuid())
+  faskesId       String?
+  faskes         Faskes? @relation(fields: [faskesId], references: [id], onDelete: SetNull)
   noRM           String  @unique
   noIHS          String? @unique
   nik            String? @unique
@@ -580,6 +585,7 @@ model Poliklinik {
   kunjungans     Kunjungan[]     @relation("PoliKunjungan")
   dokters        User[]          @relation("DokterPoliklinik")
   ruangans       MasterRuangan[] @relation("PoliRuangan")
+  bookingsOnline BookingAntreanOnline[]
 
   @@unique([faskesId, kodePoli])
 }
@@ -918,18 +924,23 @@ model BatchVaksin {
   vaksinId String
   vaksin   MasterVaksin @relation(fields: [vaksinId], references: [id], onDelete: Restrict)
 
-  noBatch        String // Nomor Lot/Batch produksi dari pabrik
-  tanggalExpired DateTime // Tanggal kedaluwarsa vaksin
-  stok           Int      @default(0) // Jumlah vial/dosis
-  statusAktif    Boolean  @default(true)
+  faskesId String?
+  faskes   Faskes? @relation(fields: [faskesId], references: [id], onDelete: Cascade)
+
+  noBatch         String // Nomor Lot/Batch produksi dari pabrik
+  tanggalExpired  DateTime // Tanggal kedaluwarsa vaksin
+  stok            Int      @default(0) // Jumlah vial/dosis
+  stokMinimum     Int      @default(10) // Buffer stock pengaman
+  suhuPenyimpanan String?  @default("2-8°C") // Standar Cold Chain Bio Farma / WHO
+  statusAktif     Boolean  @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   riwayatSuntik RiwayatImunisasi[]
 
-  // Proteksi Arsitektur: 1 Vaksin tidak boleh punya 2 Nomor Batch yang sama persis
-  @@unique([vaksinId, noBatch])
+  // Proteksi Arsitektur: 1 Faskes tidak boleh punya 2 Batch Vaksin yang sama persis
+  @@unique([faskesId, vaksinId, noBatch])
 }
 
 // 3. Tabel Transaksi Inti: Riwayat Penyuntikan
@@ -1374,6 +1385,7 @@ model TempatTidur {
   nomorBed   String // Contoh: BED-01, BED-02
   kelasKamar String @default("NON_KELAS_IGD") // KELAS_1, KELAS_2, KELAS_3, VIP, NON_KELAS_IGD, ISOLASI
   statusBed  String @default("TERSEDIA") // TERSEDIA, TERISI, PERBAIKAN, DIBERSIHKAN
+  gambarUrl  String? // Foto / thumbnail visual tempat tidur
 
   // Pasien/Kunjungan yang sedang mengisi bed saat ini (jika status TERISI)
   kunjunganAktifId String?
@@ -1403,6 +1415,7 @@ model AsetRuangan {
   merk         String?
   tipeModel    String?
   nomorSeri    String?
+  gambarUrl    String? // Foto / thumbnail visual alat kesehatan
 
   tahunPerolehan Int?
   sumberAnggaran String? // APBD, APBN, BOK, BLUD, HIBAH
@@ -1502,15 +1515,18 @@ model Faskes {
 
   // Relasi
   users             User[]
+  pasiens           Pasien[]
   kunjungans        Kunjungan[]
   tenagaMedis       TenagaMedis[]
   polikliniks       Poliklinik[]
   ruangans          MasterRuangan[]
   asets             AsetRuangan[]
   stokObat          StokObatFaskes[]
+  batchVaksin       BatchVaksin[]
   mutasiNakesTujuan MutasiTenagaMedis[]      @relation("FaskesTujuanMutasi")
   mutasiNakesAsal   MutasiTenagaMedis[]      @relation("FaskesAsalMutasi")
   logAgregats       LogAgregatHarianDinkes[]
+  bookingsOnline    BookingAntreanOnline[]
 }
 
 // ==========================================
@@ -1586,3 +1602,71 @@ model LogAgregatHarianDinkes {
 
   @@unique([tanggal, faskesId])
 }
+
+// ==========================================
+// PORTAL PASIEN ONLINE (WHATSAPP AUTH & MULTI-NIK)
+// ==========================================
+model AkunPasienOnline {
+  id           String   @id @default(cuid())
+  nomorWa      String   @unique
+  pinHash      String?
+  isVerified   Boolean  @default(false)
+  
+  otpCode      String?
+  otpExpiresAt DateTime?
+  otpAttempts  Int      @default(0)
+  lastLoginAt  DateTime?
+
+  keluarga     PasienOnlineKeluarga[]
+  bookings     BookingAntreanOnline[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model PasienOnlineKeluarga {
+  id               String            @id @default(cuid())
+  akunPasienId     String
+  akunPasien       AkunPasienOnline  @relation(fields: [akunPasienId], references: [id], onDelete: Cascade)
+  
+  nik              String
+  namaLengkap      String
+  tanggalLahir     DateTime
+  hubunganKeluarga String            @default("Diri Sendiri") // "Diri Sendiri", "Suami", "Istri", "Anak", "Orang Tua", "Lainnya"
+  jenisKelamin     String?           // "Laki-laki", "Perempuan"
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@unique([akunPasienId, nik])
+}
+
+model BookingAntreanOnline {
+  id               String            @id @default(cuid())
+  akunPasienId     String
+  akunPasien       AkunPasienOnline  @relation(fields: [akunPasienId], references: [id], onDelete: Cascade)
+  
+  kodeBooking      String            @unique // e.g. "BK-260929-CBN01"
+  faskesId         String
+  faskes           Faskes            @relation(fields: [faskesId], references: [id], onDelete: Cascade)
+  
+  poliklinikId     String
+  poliklinik       Poliklinik        @relation(fields: [poliklinikId], references: [id], onDelete: Cascade)
+  
+  dokterId         String?
+  dokter           User?             @relation("DokterBookingOnline", fields: [dokterId], references: [id], onDelete: SetNull)
+  
+  nik              String
+  namaLengkap      String
+  tanggalLahir     DateTime
+  tanggalKunjungan DateTime
+  keluhan          String?
+  jenisPasien      String            @default("BARU") // "LAMA" atau "BARU"
+  noRM             String?
+  noAntrian        String?
+  statusBooking    String            @default("TERKONFIRMASI") // "TERKONFIRMASI", "CHECKED_IN", "BATAL"
+  
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+

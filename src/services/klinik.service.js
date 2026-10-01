@@ -58,17 +58,27 @@ const klinikService = {
   },
 
   // === Dokter Klinik ===
-  getDokterByPoli: async (poliklinikId) => {
+  getDokterByPoli: async (poliklinikId, user = null, requestedFaskesId = null) => {
+    const isDinkes = user && ['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role);
+    const effectiveFaskesId = isDinkes ? (requestedFaskesId || null) : (user?.faskesId || requestedFaskesId || null);
+
+    const where = {
+      poliklinikId: poliklinikId,
+      role: 'DOKTER',
+    };
+
+    if (effectiveFaskesId) {
+      where.faskesId = effectiveFaskesId;
+    }
+
     return await prisma.user.findMany({
-      where: {
-        poliklinikId: poliklinikId,
-        role: 'DOKTER',
-      },
+      where,
       select: {
         id: true,
         username: true,
         namaLengkap: true,
         role: true,
+        faskesId: true,
       },
       orderBy: [
         { namaLengkap: 'asc' },

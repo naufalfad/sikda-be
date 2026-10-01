@@ -316,10 +316,18 @@ const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
       throw err;
     }
 
+    if (kunjungan.statusKunjungan === 'MENUNGGU' || kunjungan.statusKunjungan === 'DIPROSES_SCREENING') {
+      const err = new Error('Pasien ini belum selesai dilakukan pemeriksaan awal (Screening & TTV) oleh Perawat. Pasien harus melalui pemeriksaan perawat terlebih dahulu.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const effectiveDokterId = dokterId || kunjungan.dokterTujuanId || null;
+
     // Jika sudah ada rekam medis (sudah pernah dimulai), kembalikan saja
     if (kunjungan.rekamMedis) {
-      // Update status hanya jika masih MENUNGGU atau MENUNGGU_DOKTER
-      if (['MENUNGGU', 'MENUNGGU_DOKTER'].includes(kunjungan.statusKunjungan)) {
+      // Update status hanya jika masih MENUNGGU_DOKTER
+      if (kunjungan.statusKunjungan === 'MENUNGGU_DOKTER') {
         await tx.kunjungan.update({
           where: { id: kunjunganId },
           data: { statusKunjungan: 'DIPERIKSA' },
@@ -329,7 +337,7 @@ const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
     }
 
     // Lock status kunjungan jika masih baru
-    if (['MENUNGGU', 'MENUNGGU_DOKTER'].includes(kunjungan.statusKunjungan)) {
+    if (kunjungan.statusKunjungan === 'MENUNGGU_DOKTER') {
       await tx.kunjungan.update({
         where: { id: kunjunganId },
         data: {
@@ -344,7 +352,7 @@ const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
       data: {
         kunjunganId,
         pasienId: kunjungan.pasienId,
-        dokterId,
+        dokterId: effectiveDokterId,
         statusPemeriksaan: 'DRAFT',
       },
     });

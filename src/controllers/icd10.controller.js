@@ -8,18 +8,18 @@ const icd10Controller = {
       
       let whereClause = {};
       
-      if (q) {
+      if (q && q.trim()) {
         whereClause = {
           OR: [
-            { kode_icd10: { contains: q, mode: 'insensitive' } },
-            { nama_diagnosis: { contains: q, mode: 'insensitive' } }
+            { kode_icd10: { contains: q.trim(), mode: 'insensitive' } },
+            { nama_diagnosis: { contains: q.trim(), mode: 'insensitive' } }
           ]
         };
       }
 
       const results = await prisma.masterICD10.findMany({
         where: whereClause,
-        take: 20, // Batasi hasil pencarian 20 teratas
+        take: q && q.trim() ? 50 : 250, // Jika kosong tampilkan seluruh master ICD-10
         orderBy: { kode_icd10: 'asc' }
       });
 

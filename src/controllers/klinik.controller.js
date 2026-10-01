@@ -39,7 +39,7 @@ const getLayananByPoli = async (req, res, next) => {
 
 const getDokterByPoli = async (req, res, next) => {
   try {
-    const dokter = await klinikService.getDokterByPoli(req.params.poliId);
+    const dokter = await klinikService.getDokterByPoli(req.params.poliId, req.user, req.query.faskesId);
     res.json(dokter);
   } catch (error) {
     next(error);

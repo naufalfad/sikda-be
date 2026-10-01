@@ -14,6 +14,7 @@ router.get('/workload', dinkesController.getWorkloadAnalytics);
 router.get('/beds', dinkesController.getBedMonitoring);
 router.get('/assets', dinkesController.getCriticalAssetsMonitoring);
 router.get('/medicines', dinkesController.getMedicineStockAlerts);
+router.get('/vaccines', dinkesController.getVaccineMonitoring);
 router.get('/surveillance', dinkesController.getDiseaseSurveillance);
 
 // ==========================================

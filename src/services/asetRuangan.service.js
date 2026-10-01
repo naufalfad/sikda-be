@@ -213,6 +213,7 @@ const createBed = async (data) => {
       nomorBed: data.nomorBed,
       kelasKamar: data.kelasKamar || 'NON_KELAS_IGD',
       statusBed: data.statusBed || 'TERSEDIA',
+      gambarUrl: data.gambarUrl || '/images/aset/bed.jpg',
       operationalStatus: data.statusBed === 'TERISI' ? 'O' : (data.statusBed === 'PERBAIKAN' ? 'C' : 'U'),
       kunjunganAktifId: data.kunjunganAktifId || null
     }
@@ -368,6 +369,7 @@ const createAset = async (data, user) => {
       merk: data.merk || null,
       tipeModel: data.tipeModel || null,
       nomorSeri: data.nomorSeri || null,
+      gambarUrl: data.gambarUrl || null,
       tahunPerolehan: data.tahunPerolehan ? parseInt(data.tahunPerolehan, 10) : null,
       sumberAnggaran: data.sumberAnggaran || null,
       hargaPerolehan: data.hargaPerolehan ? parseFloat(data.hargaPerolehan) : 0,
@@ -427,9 +429,15 @@ const syncDeviceToSatuSehat = async (id) => {
 // 4. SERVICES PEMELIHARAAN & KALIBRASI
 // ==========================================
 
-const getPemeliharaans = async (query = {}) => {
+const getPemeliharaans = async (query = {}, user) => {
   const { asetId, status, jenisKegiatan } = query;
   const where = {};
+
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role)) {
+    where.aset = {
+      faskesId: user.faskesId
+    };
+  }
 
   if (asetId) where.asetId = asetId;
   if (status) where.status = status;
@@ -448,25 +456,33 @@ const getPemeliharaans = async (query = {}) => {
   });
 };
 
-const getKalibrasiAlerts = async () => {
+const getKalibrasiAlerts = async (user) => {
   const now = new Date();
   const next30Days = new Date();
   next30Days.setDate(next30Days.getDate() + 30);
 
   // Ambil pemeliharaan yang terjadwal dalam 30 hari ke depan atau sudah kedaluwarsa kalibrasinya
+  const where = {
+    OR: [
+      {
+        status: 'TERJADWAL',
+        tanggalJadwal: { lte: next30Days }
+      },
+      {
+        status: 'SELESAI',
+        tanggalKalibrasiExpired: { lte: next30Days }
+      }
+    ]
+  };
+
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role)) {
+    where.aset = {
+      faskesId: user.faskesId
+    };
+  }
+
   const alerts = await prisma.riwayatPemeliharaanAset.findMany({
-    where: {
-      OR: [
-        {
-          status: 'TERJADWAL',
-          tanggalJadwal: { lte: next30Days }
-        },
-        {
-          status: 'SELESAI',
-          tanggalKalibrasiExpired: { lte: next30Days }
-        }
-      ]
-    },
+    where,
     include: {
       aset: {
         include: {
@@ -525,8 +541,15 @@ const updatePemeliharaan = async (id, data) => {
 // 5. SERVICES MUTASI ASET
 // ==========================================
 
-const getMutasiHistory = async (asetId) => {
+const getMutasiHistory = async (asetId, user) => {
   const where = asetId ? { asetId } : {};
+
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role)) {
+    where.aset = {
+      ...(where.aset || {}),
+      faskesId: user.faskesId
+    };
+  }
 
   return await prisma.riwayatMutasiAset.findMany({
     where,

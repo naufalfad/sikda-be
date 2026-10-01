@@ -469,7 +469,8 @@ const getMedicineStockAlerts = async (query = {}) => {
           kodeObat: s.obat?.kodeObat,
           sisaStok: s.stok,
           stokMinimum: s.stokMinimum,
-          kategori: s.obat?.kategori
+          kategori: s.obat?.kategori || 'Obat',
+          satuan: s.obat?.sediaan || 'Pcs'
         });
       }
 
@@ -481,6 +482,8 @@ const getMedicineStockAlerts = async (query = {}) => {
             obatId: s.obatId,
             namaObat: s.obat?.namaObat,
             noBatch: s.noBatch,
+            kategori: s.obat?.kategori || 'Obat',
+            satuan: s.obat?.sediaan || 'Pcs',
             status: 'KADALUWARSA',
             expiredDate: exp
           });
@@ -489,6 +492,8 @@ const getMedicineStockAlerts = async (query = {}) => {
             obatId: s.obatId,
             namaObat: s.obat?.namaObat,
             noBatch: s.noBatch,
+            kategori: s.obat?.kategori || 'Obat',
+            satuan: s.obat?.sediaan || 'Pcs',
             status: 'SEGERA_KADALUWARSA',
             expiredDate: exp
           });
@@ -512,6 +517,109 @@ const getMedicineStockAlerts = async (query = {}) => {
   return {
     totalFaskesBermasalahStok: stockAlerts.length,
     data: stockAlerts
+  };
+};
+
+// ==========================================
+// 5B. MONITORING LOGISTIK & STOK VAKSIN (COLD-CHAIN) SE-KABUPATEN
+// ==========================================
+const getVaccineMonitoring = async (query = {}) => {
+  const { faskesId, kecamatan } = query;
+
+  const faskesWhere = { statusAktif: true };
+  if (faskesId) faskesWhere.id = faskesId;
+  if (kecamatan) faskesWhere.kecamatan = { contains: kecamatan, mode: 'insensitive' };
+
+  const faskesList = await prisma.faskes.findMany({
+    where: faskesWhere,
+    include: {
+      batchVaksin: {
+        include: {
+          vaksin: true
+        },
+        orderBy: { tanggalExpired: 'asc' }
+      }
+    },
+    orderBy: { namaFaskes: 'asc' }
+  });
+
+  const now = new Date();
+  const sixtyDaysLater = new Date();
+  sixtyDaysLater.setDate(now.getDate() + 60);
+
+  let totalDosisKabupaten = 0;
+  let vaksinKritisCount = 0;
+  let vaksinSegeraExpiredCount = 0;
+
+  const summary = faskesList.map(faskes => {
+    let totalDosisFaskes = 0;
+    const batchDetails = (faskes.batchVaksin || []).map(b => {
+      totalDosisFaskes += b.stok;
+      totalDosisKabupaten += b.stok;
+
+      let sisaHari = null;
+      let statusExpired = 'AMAN';
+      if (b.tanggalExpired) {
+        const diffMs = new Date(b.tanggalExpired).getTime() - now.getTime();
+        sisaHari = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        if (sisaHari < 0) {
+          statusExpired = 'KADALUWARSA';
+          vaksinSegeraExpiredCount++;
+        } else if (sisaHari <= 60) {
+          statusExpired = 'SEGERA_KADALUWARSA';
+          vaksinSegeraExpiredCount++;
+        } else if (sisaHari <= 90) {
+          statusExpired = 'WASPADA';
+        }
+      }
+
+      let statusStok = 'AMAN';
+      if (b.stok === 0) {
+        statusStok = 'HABIS';
+        vaksinKritisCount++;
+      } else if (b.stok <= b.stokMinimum) {
+        statusStok = 'KRITIS';
+        vaksinKritisCount++;
+      }
+
+      return {
+        id: b.id,
+        vaksinId: b.vaksinId,
+        namaVaksin: b.vaksin?.namaVaksin,
+        kodeKfa: b.vaksin?.kodeKfa,
+        targetPenyakit: b.vaksin?.targetPenyakit,
+        noBatch: b.noBatch,
+        tanggalExpired: b.tanggalExpired,
+        sisaHari,
+        statusExpired,
+        stok: b.stok,
+        stokMinimum: b.stokMinimum,
+        statusStok,
+        suhuPenyimpanan: b.suhuPenyimpanan || '2-8°C'
+      };
+    });
+
+    return {
+      faskesId: faskes.id,
+      namaFaskes: faskes.namaFaskes,
+      kodeFaskes: faskes.kodeFaskes,
+      kecamatan: faskes.kecamatan,
+      totalDosis: totalDosisFaskes,
+      jumlahBatch: batchDetails.length,
+      kritisBatchCount: batchDetails.filter(b => b.statusStok === 'KRITIS' || b.statusStok === 'HABIS').length,
+      segeraExpiredCount: batchDetails.filter(b => b.statusExpired === 'SEGERA_KADALUWARSA' || b.statusExpired === 'KADALUWARSA').length,
+      vaksinList: batchDetails
+    };
+  });
+
+  return {
+    ringkasan: {
+      totalDosisKabupaten,
+      totalPuskesmas: faskesList.length,
+      vaksinKritisCount,
+      vaksinSegeraExpiredCount
+    },
+    data: summary
   };
 };
 
@@ -601,7 +709,7 @@ const getFaskesList = async (query = {}) => {
   if (kecamatan) where.kecamatan = { contains: kecamatan, mode: 'insensitive' };
   if (statusAktif !== undefined) where.statusAktif = statusAktif === 'true' || statusAktif === true;
 
-  return await prisma.faskes.findMany({
+  const faskesList = await prisma.faskes.findMany({
     where,
     include: {
       _count: {
@@ -612,29 +720,585 @@ const getFaskesList = async (query = {}) => {
           ruangans: true,
           asets: true
         }
-      }
-    },
-    orderBy: { namaFaskes: 'asc' }
-  });
-};
-
-const getFaskesById = async (id) => {
-  return await prisma.faskes.findUnique({
-    where: { id },
-    include: {
-      users: { select: { id: true, username: true, namaLengkap: true, role: true } },
-      tenagaMedis: true,
-      polikliniks: true,
+      },
       ruangans: {
         include: {
           tempatTidurs: true
         }
+      }
+    },
+    orderBy: { namaFaskes: 'asc' }
+  });
+
+  return faskesList.map(f => {
+    const totalBedFisik = (f.ruangans || []).reduce((sum, r) => sum + (r.tempatTidurs?.length || 0), 0);
+    const { ruangans, ...rest } = f;
+    return {
+      ...rest,
+      totalBedFisik,
+      kapasitasRawatInap: totalBedFisik
+    };
+  });
+};
+
+const getFaskesById = async (id) => {
+  const faskes = await prisma.faskes.findUnique({
+    where: { id },
+    include: {
+      users: { select: { id: true, username: true, namaLengkap: true, role: true } },
+      tenagaMedis: {
+        include: {
+          user: { select: { id: true, username: true, role: true, namaLengkap: true } }
+        }
+      },
+      polikliniks: {
+        include: {
+          _count: {
+            select: { kunjungans: true }
+          }
+        }
+      },
+      ruangans: {
+        include: {
+          tempatTidurs: {
+            include: {
+              kunjunganAktif: {
+                include: {
+                  pasien: { select: { id: true, namaLengkap: true, noRM: true, jenisKelamin: true } }
+                }
+              }
+            },
+            orderBy: { nomorBed: 'asc' }
+          }
+        },
+        orderBy: { namaRuangan: 'asc' }
       },
       asets: {
-        select: { id: true, kodeAset: true, namaAset: true, kondisiAset: true, statusOperasional: true }
+        include: {
+          ruangan: { select: { namaRuangan: true, gedung: true, kategoriRuangan: true } },
+          riwayatPemeliharaan: {
+            orderBy: { tanggalJadwal: 'desc' },
+            take: 1
+          }
+        },
+        orderBy: { namaAset: 'asc' }
+      },
+      stokObat: {
+        include: {
+          obat: true
+        },
+        orderBy: [
+          { tanggalExpired: 'asc' },
+          { stok: 'asc' }
+        ]
+      },
+      batchVaksin: {
+        include: {
+          vaksin: true
+        },
+        orderBy: [
+          { tanggalExpired: 'asc' },
+          { stok: 'asc' }
+        ]
       }
     }
   });
+
+  if (!faskes) return null;
+
+  const now = new Date();
+  const thirtyDaysLater = new Date();
+  thirtyDaysLater.setDate(now.getDate() + 30);
+  const sixtyDaysLater = new Date();
+  sixtyDaysLater.setDate(now.getDate() + 60);
+
+  // 1. Profil & Analisis Aset & Kelaikan Alkes
+  const allAsets = faskes.asets || [];
+  const alkesMedis = allAsets.filter(a => a.kategoriAset.startsWith('MEDIS_'));
+  const nonMedis = allAsets.filter(a => !a.kategoriAset.startsWith('MEDIS_'));
+
+  const kondisiAset = {
+    baik: allAsets.filter(a => a.kondisiAset === 'BAIK').length,
+    rusakRingan: allAsets.filter(a => a.kondisiAset === 'RUSAK_RINGAN').length,
+    rusakBerat: allAsets.filter(a => a.kondisiAset === 'RUSAK_BERAT').length,
+    afkir: allAsets.filter(a => a.kondisiAset === 'AFKIR').length
+  };
+
+  const statusOperasionalAset = {
+    aktif: allAsets.filter(a => a.statusOperasional === 'AKTIF_DIGUNAKAN').length,
+    dalamPerbaikan: allAsets.filter(a => a.statusOperasional === 'DALAM_PERBAIKAN').length,
+    dalamKalibrasi: allAsets.filter(a => a.statusOperasional === 'DALAM_KALIBRASI').length,
+    nonAktif: allAsets.filter(a => a.statusOperasional === 'NON_AKTIF').length
+  };
+
+  const alkesKritisRusak = alkesMedis.filter(a => a.kondisiAset === 'RUSAK_BERAT' || a.statusOperasional === 'DALAM_PERBAIKAN');
+
+  const kalibrasiAlerts = [];
+  allAsets.forEach(a => {
+    const pemeliharaan = a.riwayatPemeliharaan?.[0];
+    if (pemeliharaan?.tanggalKalibrasiExpired) {
+      const expDate = new Date(pemeliharaan.tanggalKalibrasiExpired);
+      if (expDate < now) {
+        kalibrasiAlerts.push({
+          asetId: a.id,
+          namaAset: a.namaAset,
+          kodeAset: a.kodeAset,
+          ruangan: a.ruangan?.namaRuangan,
+          status: 'KADALUWARSA',
+          expiredDate: expDate
+        });
+      } else if (expDate <= thirtyDaysLater) {
+        kalibrasiAlerts.push({
+          asetId: a.id,
+          namaAset: a.namaAset,
+          kodeAset: a.kodeAset,
+          ruangan: a.ruangan?.namaRuangan,
+          status: 'MENDEKATI_KADALUWARSA',
+          expiredDate: expDate
+        });
+      }
+    }
+  });
+
+  // 2. Analisis SDMK (Sumber Daya Manusia Kesehatan)
+  const nakesList = faskes.tenagaMedis || [];
+  const dokters = nakesList.filter(n => n.profesi === 'DOKTER' || n.profesi === 'DOKTER_GIGI' || n.spesialis);
+  const perawats = nakesList.filter(n => n.profesi === 'PERAWAT');
+  const bidans = nakesList.filter(n => n.profesi === 'BIDAN');
+  const apotekers = nakesList.filter(n => n.profesi === 'APOTEKER' || n.profesi === 'ASISTEN_APOTEKER');
+
+  // Kunjungan untuk Rasio
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const totalPasienBulanIni = await prisma.kunjungan.count({
+    where: { faskesId: id, tanggalRegistrasi: { gte: startOfMonth } }
+  });
+
+  const totalPasienHariIni = await prisma.kunjungan.count({
+    where: { faskesId: id, tanggalRegistrasi: { gte: startOfDay } }
+  });
+
+  const totalKunjunganAllTime = await prisma.kunjungan.count({
+    where: { faskesId: id }
+  });
+
+  const rasioPasienPerDokter = dokters.length > 0 ? Math.round(totalPasienBulanIni / dokters.length) : totalPasienBulanIni;
+  let statusBebanKerja = 'NORMAL';
+  if (rasioPasienPerDokter > 50) statusBebanKerja = 'KRITIS_TINGGI';
+  else if (rasioPasienPerDokter > 30) statusBebanKerja = 'TINGGI';
+  else if (rasioPasienPerDokter < 10) statusBebanKerja = 'SURPLUS';
+
+  // 3. Analisis Ruangan & Tempat Tidur (BOR)
+  const allBeds = [];
+  (faskes.ruangans || []).forEach(r => {
+    (r.tempatTidurs || []).forEach(b => {
+      allBeds.push({
+        ...b,
+        ruanganNama: r.namaRuangan,
+        ruanganKategori: r.kategoriRuangan
+      });
+    });
+  });
+
+  const totalBed = allBeds.length;
+  const bedTerisi = allBeds.filter(b => b.statusBed === 'TERISI').length;
+  const bedTersedia = allBeds.filter(b => b.statusBed === 'TERSEDIA').length;
+  const bedPerbaikan = allBeds.filter(b => b.statusBed === 'PERBAIKAN').length;
+  const bor = totalBed > 0 ? Number(((bedTerisi / totalBed) * 100).toFixed(1)) : 0;
+
+  // 4. Analisis Farmasi, BMHP & Vaksin
+  const allStok = faskes.stokObat || [];
+  const obatList = allStok.filter(s => s.obat?.kategori !== 'BMHP');
+  const bmhpList = allStok.filter(s => s.obat?.kategori === 'BMHP');
+
+  const obatKritis = obatList.filter(s => s.stok <= s.stokMinimum);
+  const bmhpKritis = bmhpList.filter(s => s.stok <= s.stokMinimum);
+
+  const batchVaksinList = (faskes.batchVaksin || []).map(b => {
+    let sisaHari = null;
+    let statusExpired = 'AMAN';
+    if (b.tanggalExpired) {
+      const diffMs = new Date(b.tanggalExpired).getTime() - now.getTime();
+      sisaHari = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+      if (sisaHari < 0) statusExpired = 'KADALUWARSA';
+      else if (sisaHari <= 60) statusExpired = 'SEGERA_KADALUWARSA';
+      else if (sisaHari <= 90) statusExpired = 'WASPADA';
+    }
+    return {
+      id: b.id,
+      namaVaksin: b.vaksin?.namaVaksin,
+      kodeKfa: b.vaksin?.kodeKfa,
+      targetPenyakit: b.vaksin?.targetPenyakit,
+      noBatch: b.noBatch,
+      stok: b.stok,
+      stokMinimum: b.stokMinimum,
+      suhuPenyimpanan: b.suhuPenyimpanan || '2-8°C',
+      tanggalExpired: b.tanggalExpired,
+      sisaHari,
+      statusExpired,
+      gambarUrl: b.vaksin?.gambarUrl || '/images/logistik/vaksin.jpg'
+    };
+  });
+
+  const totalDosisVaksin = batchVaksinList.reduce((sum, b) => sum + b.stok, 0);
+
+  // 5. Surveilans Epidemiologi Faskes Ini
+  const topDiagnoses = await prisma.diagnosisPasien.groupBy({
+    by: ['icd10Id'],
+    _count: { id: true },
+    where: { kunjungan: { faskesId: id } },
+    orderBy: { _count: { id: 'desc' } },
+    take: 10
+  });
+
+  const totalKasusFaskes = await prisma.diagnosisPasien.count({
+    where: { kunjungan: { faskesId: id } }
+  });
+
+  const surveilansList = await Promise.all(
+    topDiagnoses.map(async (item, idx) => {
+      const icd = await prisma.masterICD10.findUnique({ where: { id_icd10: item.icd10Id } });
+      const persen = totalKasusFaskes > 0 ? Number(((item._count.id / totalKasusFaskes) * 100).toFixed(1)) : 0;
+      return {
+        peringkat: idx + 1,
+        kodeIcd10: icd?.kode_icd10 || 'UNKNOWN',
+        namaDiagnosis: icd?.nama_diagnosis || 'Tidak Teridentifikasi',
+        isPenyakitMenular: icd?.penyakit_menular || false,
+        isWajibLapor: icd?.wajib_lapor || false,
+        jumlahKasus: item._count.id,
+        persentase: `${persen}%`
+      };
+    })
+  );
+
+  // 6. Analisis Poliklinik & Pelayanan Klinis
+  const poliGroup = await prisma.kunjungan.groupBy({
+    by: ['poliklinikId'],
+    _count: { id: true },
+    where: { faskesId: id }
+  });
+
+  const allMasterPoli = await prisma.poliklinik.findMany({
+    where: {
+      OR: [
+        { faskesId: id },
+        { faskesId: null }
+      ],
+      statusAktif: true
+    }
+  });
+
+  const poliklinikStatsMap = new Map();
+  poliGroup.forEach(g => {
+    if (g.poliklinikId) poliklinikStatsMap.set(g.poliklinikId, g._count.id);
+  });
+
+  const polikliniksList = [];
+  const processedPoliIds = new Set();
+
+  allMasterPoli.forEach(p => {
+    const totalKunjungan = poliklinikStatsMap.get(p.id) || 0;
+    if (p.faskesId === id || totalKunjungan > 0) {
+      polikliniksList.push({
+        id: p.id,
+        namaPoli: p.namaPoli,
+        kodePoli: p.kodePoli,
+        deskripsi: p.deskripsi,
+        totalKunjungan
+      });
+      processedPoliIds.add(p.id);
+    }
+  });
+
+  for (const g of poliGroup) {
+    if (g.poliklinikId && !processedPoliIds.has(g.poliklinikId)) {
+      const p = await prisma.poliklinik.findUnique({ where: { id: g.poliklinikId } });
+      if (p) {
+        polikliniksList.push({
+          id: p.id,
+          namaPoli: p.namaPoli,
+          kodePoli: p.kodePoli,
+          deskripsi: p.deskripsi,
+          totalKunjungan: g._count.id
+        });
+        processedPoliIds.add(p.id);
+      }
+    }
+  }
+
+  polikliniksList.sort((a, b) => b.totalKunjungan - a.totalKunjungan);
+
+  const recentKunjungans = await prisma.kunjungan.findMany({
+    where: { faskesId: id },
+    include: {
+      pasien: {
+        select: {
+          id: true,
+          noRM: true,
+          namaLengkap: true,
+          jenisKelamin: true,
+          tanggalLahir: true,
+          nik: true
+        }
+      },
+      poliklinik: {
+        select: { id: true, namaPoli: true, kodePoli: true }
+      },
+      dokterTujuan: {
+        select: { id: true, namaLengkap: true }
+      },
+      diagnosis: {
+        include: {
+          icd10: {
+            select: {
+              kode_icd10: true,
+              nama_diagnosis: true
+            }
+          }
+        }
+      }
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 100
+  });
+
+  const daftarKunjungan = recentKunjungans.map(k => {
+    let usia = null;
+    if (k.pasien?.tanggalLahir) {
+      const birthDate = new Date(k.pasien.tanggalLahir);
+      const diff = now.getFullYear() - birthDate.getFullYear();
+      usia = diff >= 0 ? diff : null;
+    }
+    return {
+      id: k.id,
+      noAntrian: k.noAntrian,
+      tanggalRegistrasi: k.tanggalRegistrasi || k.createdAt,
+      statusKunjungan: k.statusKunjungan,
+      jenisPembayaran: k.jenisPembayaran || 'UMUM',
+      prioritasPasien: k.prioritasPasien || 'NORMAL',
+      pasienId: k.pasien?.id,
+      noRM: k.pasien?.noRM,
+      namaPasien: k.pasien?.namaLengkap,
+      jenisKelamin: k.pasien?.jenisKelamin,
+      usia,
+      poliId: k.poliklinik?.id,
+      namaPoli: k.poliklinik?.namaPoli || 'Poli Umum',
+      kodePoli: k.poliklinik?.kodePoli || 'UMUM',
+      namaDokter: k.dokterTujuan?.namaLengkap || 'Belum Ditentukan',
+      diagnosis: (() => {
+        const uniqueMap = new Map();
+        (k.diagnosis || []).forEach(d => {
+          const kode = d.icd10?.kode_icd10;
+          if (kode && !uniqueMap.has(kode)) {
+            uniqueMap.set(kode, {
+              kode: kode,
+              nama: d.icd10?.nama_diagnosis,
+              jenis: d.jenisDiagnosis
+            });
+          }
+        });
+        return Array.from(uniqueMap.values());
+      })()
+    };
+  });
+
+  return {
+    profil: {
+      id: faskes.id,
+      kodeFaskes: faskes.kodeFaskes,
+      namaFaskes: faskes.namaFaskes,
+      jenisFaskes: faskes.jenisFaskes,
+      kategoriWilayah: faskes.kategoriWilayah || 'PERKOTAAN',
+      statusAktif: faskes.statusAktif,
+      alamat: faskes.alamat,
+      kecamatan: faskes.kecamatan,
+      desaKelurahan: faskes.desaKelurahan,
+      kabupatenKota: faskes.kabupatenKota,
+      provinsi: faskes.provinsi,
+      kodePos: faskes.kodePos,
+      titikGps: faskes.titikGps,
+      noTelepon: faskes.noTelepon,
+      email: faskes.email,
+      kepalaPuskesmas: faskes.kepalaPuskesmas,
+      nipKepala: faskes.nipKepala,
+      targetKunjunganHarian: faskes.targetKunjunganHarian,
+      jumlahPendudukWilayah: faskes.jumlahPendudukWilayah,
+      ihsOrganizationId: faskes.ihsOrganizationId,
+      createdAt: faskes.createdAt
+    },
+    ringkasanEksekutif: {
+      totalNakes: nakesList.length,
+      totalDokter: dokters.length,
+      totalPasienBulanIni,
+      totalPasienHariIni,
+      totalKunjunganAllTime,
+      rasioPasienPerDokter,
+      statusBebanKerja,
+      totalBed,
+      bedTerisi,
+      bedTersedia,
+      bor: `${bor}%`,
+      borAngka: bor,
+      totalAset: allAsets.length,
+      alkesKritisRusakCount: alkesKritisRusak.length,
+      kalibrasiExpiredCount: kalibrasiAlerts.filter(k => k.status === 'KADALUWARSA').length,
+      totalItemObat: obatList.length,
+      obatKritisCount: obatKritis.length,
+      totalItemBmhp: bmhpList.length,
+      bmhpKritisCount: bmhpKritis.length,
+      totalDosisVaksin,
+      vaksinBatchCount: batchVaksinList.length
+    },
+    asetAlkes: {
+      totalAset: allAsets.length,
+      totalAlkesMedis: alkesMedis.length,
+      totalNonMedis: nonMedis.length,
+      kondisi: kondisiAset,
+      statusOperasional: statusOperasionalAset,
+      alkesKritisRusak,
+      kalibrasiAlerts,
+      daftarAset: allAsets.map(a => ({
+        id: a.id,
+        kodeAset: a.kodeAset,
+        namaAset: a.namaAset,
+        kategoriAset: a.kategoriAset,
+        merk: a.merk,
+        tipeModel: a.tipeModel,
+        nomorSeri: a.nomorSeri,
+        kondisiAset: a.kondisiAset,
+        statusOperasional: a.statusOperasional,
+        ruangan: a.ruangan?.namaRuangan,
+        ihsDeviceId: a.ihsDeviceId,
+        kodeAspak: a.kodeAspak,
+        gambarUrl: a.gambarUrl || null,
+        kalibrasiExpired: a.riwayatPemeliharaan?.[0]?.tanggalKalibrasiExpired || null
+      }))
+    },
+    sdmk: {
+      totalNakes: nakesList.length,
+      totalDokter: dokters.length,
+      totalPerawat: perawats.length,
+      totalBidan: bidans.length,
+      totalApoteker: apotekers.length,
+      rasioPasienPerDokter,
+      statusBebanKerja,
+      daftarNakes: nakesList.map(n => ({
+        id: n.id,
+        namaLengkap: n.user?.namaLengkap || `Tenaga Medis (${n.nik})`,
+        nik: n.nik,
+        profesi: n.profesi,
+        spesialis: n.spesialis,
+        noSip: n.nomorSip || null,
+        nomorStr: n.nomorStr || null,
+        noIhs: n.noIHS || null,
+        statusAktif: n.statusAktif,
+        username: n.user?.username
+      }))
+    },
+    tempatTidurRuangan: {
+      totalRuangan: (faskes.ruangans || []).length,
+      totalBed,
+      bedTerisi,
+      bedTersedia,
+      bedPerbaikan,
+      bor: `${bor}%`,
+      borAngka: bor,
+      daftarRuangan: (faskes.ruangans || []).map(r => ({
+        id: r.id,
+        namaRuangan: r.namaRuangan,
+        kategoriRuangan: r.kategoriRuangan,
+        gedung: r.gedung,
+        lantai: r.lantai,
+        totalBed: (r.tempatTidurs || []).length,
+        tempatTidurs: (r.tempatTidurs || []).map(b => ({
+          id: b.id,
+          nomorBed: b.nomorBed,
+          kelasKamar: b.kelasKamar,
+          statusBed: b.statusBed,
+          gambarUrl: b.gambarUrl || '/images/aset/bed.jpg',
+          pasienNama: b.kunjunganAktif?.pasien?.namaLengkap || null,
+          pasienNoRM: b.kunjunganAktif?.pasien?.noRM || null
+        }))
+      }))
+    },
+    pelayananKlinis: {
+      totalKunjunganAllTime,
+      totalPasienBulanIni,
+      totalPasienHariIni,
+      polikliniks: polikliniksList,
+      daftarKunjungan: daftarKunjungan
+    },
+    logistik: {
+      totalItemObat: obatList.length,
+      obatKritis,
+      totalItemBmhp: bmhpList.length,
+      bmhpKritis,
+      totalDosisVaksin,
+      daftarVaksin: batchVaksinList,
+      daftarObat: obatList.map(s => {
+        let sisaHari = null;
+        let statusExpired = 'AMAN';
+        if (s.tanggalExpired) {
+          const diffMs = new Date(s.tanggalExpired).getTime() - now.getTime();
+          sisaHari = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+          if (sisaHari < 0) statusExpired = 'KADALUWARSA';
+          else if (sisaHari <= 60) statusExpired = 'SEGERA_KADALUWARSA';
+          else if (sisaHari <= 90) statusExpired = 'WASPADA';
+        }
+        return {
+          id: s.id,
+          obatId: s.obatId,
+          kodeObat: s.obat?.kodeObat,
+          namaObat: s.obat?.namaObat,
+          kategori: s.obat?.kategori,
+          sediaan: s.obat?.sediaan,
+          harga: s.obat?.harga || 0,
+          gambarUrl: s.obat?.gambarUrl || '/images/logistik/obat.jpg',
+          stok: s.stok,
+          stokMinimum: s.stokMinimum,
+          noBatch: s.noBatch || '-',
+          tanggalExpired: s.tanggalExpired,
+          sisaHari,
+          statusExpired,
+          statusStok: s.stok === 0 ? 'HABIS' : (s.stok <= s.stokMinimum ? 'KRITIS' : 'AMAN')
+        };
+      }),
+      daftarBmhp: bmhpList.map(s => {
+        let sisaHari = null;
+        let statusExpired = 'AMAN';
+        if (s.tanggalExpired) {
+          const diffMs = new Date(s.tanggalExpired).getTime() - now.getTime();
+          sisaHari = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+          if (sisaHari < 0) statusExpired = 'KADALUWARSA';
+          else if (sisaHari <= 60) statusExpired = 'SEGERA_KADALUWARSA';
+          else if (sisaHari <= 90) statusExpired = 'WASPADA';
+        }
+        return {
+          id: s.id,
+          obatId: s.obatId,
+          kodeObat: s.obat?.kodeObat,
+          namaObat: s.obat?.namaObat,
+          namaBmhp: s.obat?.namaObat,
+          kategori: s.obat?.kategori,
+          sediaan: s.obat?.sediaan,
+          harga: s.obat?.harga || 0,
+          gambarUrl: s.obat?.gambarUrl || '/images/logistik/bmhp.jpg',
+          stok: s.stok,
+          stokMinimum: s.stokMinimum,
+          noBatch: s.noBatch || '-',
+          tanggalExpired: s.tanggalExpired,
+          sisaHari,
+          statusExpired,
+          statusStok: s.stok === 0 ? 'HABIS' : (s.stok <= s.stokMinimum ? 'KRITIS' : 'AMAN')
+        };
+      })
+    },
+    surveilans: {
+      totalKasusFaskes,
+      topPenyakit: surveilansList
+    }
+  };
 };
 
 const createFaskes = async (data) => {
@@ -663,9 +1327,10 @@ const createFaskes = async (data) => {
 };
 
 const updateFaskes = async (id, data) => {
+  const { kapasitasRawatInap, totalBedFisik, tersediaIGD, ...validData } = data;
   return await prisma.faskes.update({
     where: { id },
-    data
+    data: validData
   });
 };
 
@@ -734,6 +1399,7 @@ module.exports = {
   getBedMonitoring,
   getCriticalAssetsMonitoring,
   getMedicineStockAlerts,
+  getVaccineMonitoring,
   getDiseaseSurveillance,
   // Manajemen Master Faskes
   getFaskesList,

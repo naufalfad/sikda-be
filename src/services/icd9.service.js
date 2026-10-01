@@ -1,16 +1,20 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+const prisma = require('../config/prisma');
 
 const searchICD9 = async (query) => {
   try {
-    const results = await prisma.masterICD9.findMany({
-      where: {
+    let whereClause = {};
+    if (query && query.trim()) {
+      whereClause = {
         OR: [
-          { kode_icd9: { contains: query, mode: 'insensitive' } },
-          { nama_prosedur: { contains: query, mode: 'insensitive' } },
+          { kode_icd9: { contains: query.trim(), mode: 'insensitive' } },
+          { nama_prosedur: { contains: query.trim(), mode: 'insensitive' } },
         ],
-      },
-      take: 20,
+      };
+    }
+    const results = await prisma.masterICD9.findMany({
+      where: whereClause,
+      take: query && query.trim() ? 50 : 250,
+      orderBy: { kode_icd9: 'asc' }
     });
     return results;
   } catch (error) {
@@ -21,7 +25,8 @@ const searchICD9 = async (query) => {
 const getAllICD9 = async () => {
   try {
     const results = await prisma.masterICD9.findMany({
-      take: 100,
+      take: 250,
+      orderBy: { kode_icd9: 'asc' }
     });
     return results;
   } catch (error) {

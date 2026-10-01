@@ -23,8 +23,7 @@ const uploadToCloudinary = (buffer) => {
 const getMasterObat = async (req, res, next) => {
   try {
     const { search } = req.query;
-    const faskesId = req.user?.faskesId || null;
-    const data = await masterService.getMasterObat(search, faskesId);
+    const data = await masterService.getMasterObat(search);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

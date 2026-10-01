@@ -590,56 +590,105 @@ async function main() {
   }
 
   // Alokasi Stok Obat per Faskes
-  // Puskesmas Cibinong (Stok Berlimpah)
+  const defaultExp = new Date('2027-12-31');
+
+  // Puskesmas Cibinong
   await prisma.stokObatFaskes.upsert({
     where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-001'].id } },
-    update: { stok: 800 },
-    create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-001'].id, stok: 800, stokMinimum: 50 }
+    update: { stok: 800, noBatch: 'BCH-CBN-OBT-001', tanggalExpired: defaultExp },
+    create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-001'].id, stok: 800, stokMinimum: 50, noBatch: 'BCH-CBN-OBT-001', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
     where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-002'].id } },
-    update: { stok: 450 },
-    create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-002'].id, stok: 450, stokMinimum: 30 }
+    update: { stok: 450, noBatch: 'BCH-CBN-OBT-002', tanggalExpired: defaultExp },
+    create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-002'].id, stok: 450, stokMinimum: 30, noBatch: 'BCH-CBN-OBT-002', tanggalExpired: defaultExp }
+  });
+  await prisma.stokObatFaskes.upsert({
+    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-003'].id } },
+    update: { stok: 200, noBatch: 'BCH-CBN-OBT-003', tanggalExpired: defaultExp },
+    create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-003'].id, stok: 200, stokMinimum: 25, noBatch: 'BCH-CBN-OBT-003', tanggalExpired: defaultExp }
+  });
+  await prisma.stokObatFaskes.upsert({
+    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-004'].id } },
+    update: { stok: 200, noBatch: 'BCH-CBN-OBT-004', tanggalExpired: defaultExp },
+    create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-004'].id, stok: 200, stokMinimum: 25, noBatch: 'BCH-CBN-OBT-004', tanggalExpired: defaultExp }
+  });
+  await prisma.stokObatFaskes.upsert({
+    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-OAT'].id } },
+    update: { stok: 200, noBatch: 'BCH-CBN-OBT-OAT', tanggalExpired: defaultExp },
+    create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-OAT'].id, stok: 200, stokMinimum: 20, noBatch: 'BCH-CBN-OBT-OAT', tanggalExpired: defaultExp }
+  });
+  await prisma.stokObatFaskes.upsert({
+    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-ORALIT'].id } },
+    update: { stok: 200, noBatch: 'BCH-CBN-OBT-ORALIT', tanggalExpired: defaultExp },
+    create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-ORALIT'].id, stok: 200, stokMinimum: 25, noBatch: 'BCH-CBN-OBT-ORALIT', tanggalExpired: defaultExp }
   });
 
   // Puskesmas Sukamakmur (Kritis: Paracetamol menipis!)
   await prisma.stokObatFaskes.upsert({
     where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-001'].id } },
-    update: { stok: 8 }, // DIBAWAH MINIMUM (Pemicu Alert Dinkes!)
-    create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-001'].id, stok: 8, stokMinimum: 25 }
+    update: { stok: 8, noBatch: 'BCH-SKM-OBT-001', tanggalExpired: defaultExp }, // DIBAWAH MINIMUM (Pemicu Alert Dinkes!)
+    create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-001'].id, stok: 8, stokMinimum: 25, noBatch: 'BCH-SKM-OBT-001', tanggalExpired: defaultExp }
+  });
+  await prisma.stokObatFaskes.upsert({
+    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-002'].id } },
+    update: { stok: 120, noBatch: 'BCH-SKM-OBT-002', tanggalExpired: defaultExp },
+    create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-002'].id, stok: 120, stokMinimum: 20, noBatch: 'BCH-SKM-OBT-002', tanggalExpired: defaultExp }
+  });
+  await prisma.stokObatFaskes.upsert({
+    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-003'].id } },
+    update: { stok: 120, noBatch: 'BCH-SKM-OBT-003', tanggalExpired: defaultExp },
+    create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-003'].id, stok: 120, stokMinimum: 20, noBatch: 'BCH-SKM-OBT-003', tanggalExpired: defaultExp }
+  });
+  await prisma.stokObatFaskes.upsert({
+    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-004'].id } },
+    update: { stok: 120, noBatch: 'BCH-SKM-OBT-004', tanggalExpired: defaultExp },
+    create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-004'].id, stok: 120, stokMinimum: 20, noBatch: 'BCH-SKM-OBT-004', tanggalExpired: defaultExp }
+  });
+  await prisma.stokObatFaskes.upsert({
+    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-OAT'].id } },
+    update: { stok: 80, noBatch: 'BCH-SKM-OBT-OAT', tanggalExpired: defaultExp },
+    create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-OAT'].id, stok: 80, stokMinimum: 15, noBatch: 'BCH-SKM-OBT-OAT', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
     where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-ORALIT'].id } },
-    update: { stok: 15 },
-    create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-ORALIT'].id, stok: 15, stokMinimum: 20 }
+    update: { stok: 15, noBatch: 'BCH-SKM-OBT-ORALIT', tanggalExpired: defaultExp },
+    create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-ORALIT'].id, stok: 15, stokMinimum: 20, noBatch: 'BCH-SKM-OBT-ORALIT', tanggalExpired: defaultExp }
   });
 
   // ==============================================================
   // 6. SEED RUANGAN, TEMPAT TIDUR, & ASET PER FASKES
   // ==============================================================
-  console.log('🛏️ Seeding Ruangan & Bed Management per Faskes...');
+  console.log('🛏️ Seeding Ruangan, Bed Management, & Aset per Faskes...');
 
-  // Cibinong: Ruangan Rawat Inap & Tempat Tidur
-  const rInapCibinong = await prisma.masterRuangan.upsert({
-    where: { kodeRuangan: 'R-INAP-CBN-01' },
-    update: { faskesId: faskesCibinong.id },
-    create: {
-      kodeRuangan: 'R-INAP-CBN-01',
-      namaRuangan: 'Ruang Rawat Inap Mawar',
-      lantai: 'Lantai 2',
-      gedung: 'Gedung B',
-      kategoriRuangan: 'RAWAT_INAP',
-      faskesId: faskesCibinong.id
-    }
-  });
+  // Cibinong: Ruangan Faskes Lengkap
+  const cbnRoomDefs = [
+    { kodeRuangan: 'R-POLI-UMUM-CBN', namaRuangan: 'Ruang Pemeriksaan Umum (Poli 1)', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'RAWAT_JALAN' },
+    { kodeRuangan: 'R-POLI-GIGI-CBN', namaRuangan: 'Ruang Pelayanan Gigi & Mulut', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'RAWAT_JALAN' },
+    { kodeRuangan: 'R-POLI-KIA-CBN', namaRuangan: 'Ruang KIA, KB & Imunisasi', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'RAWAT_JALAN' },
+    { kodeRuangan: 'R-IGD-CBN', namaRuangan: 'Ruang Tindakan & Gawat Darurat (IGD)', lantai: 'Lantai 1', gedung: 'Gedung IGD', kategoriRuangan: 'IGD' },
+    { kodeRuangan: 'R-LAB-CBN', namaRuangan: 'Ruang Laboratorium Sederhana', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'PENUNJANG_MEDIS' },
+    { kodeRuangan: 'R-FARMASI-CBN', namaRuangan: 'Ruang Depo Farmasi & Vaksin', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'GUDANG' },
+    { kodeRuangan: 'R-INAP-CBN-01', namaRuangan: 'Ruang Rawat Inap Mawar', lantai: 'Lantai 2', gedung: 'Gedung B', kategoriRuangan: 'RAWAT_INAP' }
+  ];
+
+  const cbnRooms = {};
+  for (const r of cbnRoomDefs) {
+    const created = await prisma.masterRuangan.upsert({
+      where: { kodeRuangan: r.kodeRuangan },
+      update: { faskesId: faskesCibinong.id, namaRuangan: r.namaRuangan, lantai: r.lantai, gedung: r.gedung, kategoriRuangan: r.kategoriRuangan },
+      create: { ...r, faskesId: faskesCibinong.id }
+    });
+    cbnRooms[r.kodeRuangan] = created;
+  }
 
   for (let i = 1; i <= 6; i++) {
     const bedNo = `BED-MWR-0${i}`;
     await prisma.tempatTidur.upsert({
-      where: { ruanganId_nomorBed: { ruanganId: rInapCibinong.id, nomorBed: bedNo } },
+      where: { ruanganId_nomorBed: { ruanganId: cbnRooms['R-INAP-CBN-01'].id, nomorBed: bedNo } },
       update: { statusBed: i <= 4 ? 'TERISI' : 'TERSEDIA' },
       create: {
-        ruanganId: rInapCibinong.id,
+        ruanganId: cbnRooms['R-INAP-CBN-01'].id,
         nomorBed: bedNo,
         kelasKamar: 'KELAS_3',
         statusBed: i <= 4 ? 'TERISI' : 'TERSEDIA' // 4 terisi dari 6 = 66.7% BOR
@@ -675,24 +724,32 @@ async function main() {
     });
   }
 
-  // Aset Alat Kesehatan
-  await prisma.asetRuangan.upsert({
-    where: { kodeAset: 'AST-CBN-USG-01' },
-    update: { faskesId: faskesCibinong.id },
-    create: {
-      kodeAset: 'AST-CBN-USG-01',
-      namaAset: 'USG Mindray DC-30',
-      ruanganId: rInapCibinong.id,
-      faskesId: faskesCibinong.id,
-      kategoriAset: 'MEDIS_DIAGNOSTIK',
-      kondisiAset: 'BAIK',
-      statusOperasional: 'AKTIF_DIGUNAKAN',
-      kodeAspak: 'ASPAK-USG-001',
-      hargaPerolehan: 180000000
-    }
-  });
+  // Aset Alat Kesehatan Cibinong
+  const cbnAsetList = [
+    { kodeAset: 'AST-CBN-TNS-01', namaAset: 'Tensimeter Digital Klinis Omron', ruanganId: cbnRooms['R-POLI-UMUM-CBN'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Omron', tipeModel: 'HBP-1320', nomorSeri: 'OMR-CBN-9981', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 2500000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-TNS-01' },
+    { kodeAset: 'AST-CBN-DNT-01', namaAset: 'Dental Chair Unit Terintegrasi', ruanganId: cbnRooms['R-POLI-GIGI-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Gnatus', tipeModel: 'G2 Sync', nomorSeri: 'GNT-2023-011', tahunPerolehan: 2022, sumberAnggaran: 'APBD', hargaPerolehan: 85000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-DNT-01' },
+    { kodeAset: 'AST-CBN-STRL-01', namaAset: 'Autoclave Sterilisator Medis 23L', ruanganId: cbnRooms['R-POLI-GIGI-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Tuttnauer', tipeModel: '2340M', nomorSeri: 'TTN-5512', tahunPerolehan: 2022, sumberAnggaran: 'BOK', hargaPerolehan: 32000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-STRL-01' },
+    { kodeAset: 'AST-CBN-DOP-01', namaAset: 'Doppler Fetal Heart Rate Kebidanan', ruanganId: cbnRooms['R-POLI-KIA-CBN'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Bistos', tipeModel: 'BT-200', nomorSeri: 'BST-2024-88', tahunPerolehan: 2024, sumberAnggaran: 'BOK', hargaPerolehan: 4500000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-DOP-01' },
+    { kodeAset: 'AST-CBN-EKG-01', namaAset: 'Elektrokardiograf (EKG) 12 Saluran', ruanganId: cbnRooms['R-IGD-CBN'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Bionet', tipeModel: 'CardioCare 2000', nomorSeri: 'BION-4411', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 24000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-EKG-01' },
+    { kodeAset: 'AST-CBN-AED-01', namaAset: 'Defibrillator Emergency AED', ruanganId: cbnRooms['R-IGD-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Philips', tipeModel: 'HeartStart FRx', nomorSeri: 'PHL-AED-092', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 45000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-AED-01' },
+    { kodeAset: 'AST-CBN-SUCT-01', namaAset: 'Suction Pump Portable Resusitasi', ruanganId: cbnRooms['R-IGD-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Thomas', tipeModel: 'Medi-Pump 1632', nomorSeri: 'THM-SUC-891', tahunPerolehan: 2022, sumberAnggaran: 'BLUD', hargaPerolehan: 8500000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-SUC-01' },
+    { kodeAset: 'AST-CBN-USG-01', namaAset: 'USG Mindray DC-30', ruanganId: cbnRooms['R-INAP-CBN-01'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Mindray', tipeModel: 'DC-30 Exp', nomorSeri: 'MND-USG-772', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 180000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ASPAK-USG-001' },
+    { kodeAset: 'AST-CBN-CENT-01', namaAset: 'Centrifuge Laboratorium Klinik', ruanganId: cbnRooms['R-LAB-CBN'].id, kategoriAset: 'MEDIS_LABORATORIUM', merk: 'Gemmy', tipeModel: 'PLC-03', nomorSeri: 'GMY-CENT-102', tahunPerolehan: 2022, sumberAnggaran: 'BLUD', hargaPerolehan: 7500000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-CENT-01' },
+    { kodeAset: 'AST-CBN-KULK-01', namaAset: 'Kulkas Vaksin TCW 3000 (Cold-Chain)', ruanganId: cbnRooms['R-FARMASI-CBN'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Dometic', tipeModel: 'TCW 3000 AC', nomorSeri: 'DOM-TCW-2022', tahunPerolehan: 2022, sumberAnggaran: 'APBD', hargaPerolehan: 65000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-KULK-01' }
+  ];
 
-  await prisma.asetRuangan.upsert({
+  const cbnAsetMap = {};
+  for (const a of cbnAsetList) {
+    const created = await prisma.asetRuangan.upsert({
+      where: { kodeAset: a.kodeAset },
+      update: { faskesId: faskesCibinong.id, ...a },
+      create: { ...a, faskesId: faskesCibinong.id }
+    });
+    cbnAsetMap[a.kodeAset] = created;
+  }
+
+  // Aset Sukamakmur
+  const astSkm = await prisma.asetRuangan.upsert({
     where: { kodeAset: 'AST-SKM-TNS-01' },
     update: { faskesId: faskesSukamakmur.id },
     create: {
@@ -707,6 +764,30 @@ async function main() {
       hargaPerolehan: 2500000
     }
   });
+
+  // Pemeliharaan & Kalibrasi Terhubung
+  const next14Days = new Date();
+  next14Days.setDate(next14Days.getDate() + 14);
+
+  const pemeliharaanData = [
+    { asetId: cbnAsetMap['AST-CBN-EKG-01'].id, jenisKegiatan: 'KALIBRASI_BFPK_EKSTERNAL', tanggalJadwal: new Date('2026-03-10'), tanggalPelaksanaan: new Date('2026-03-12'), tanggalKalibrasiExpired: new Date('2027-03-12'), pelaksanaVendor: 'BPFK Surabaya', biayaPemeliharaan: 1500000, nomorSertifikatKalibrasi: 'SERT-BPFK-2026-1184', hasilKegiatan: 'LAIK_PAKAI', catatan: 'Akurasi sinyal EKG ±2% laik pakai.', status: 'SELESAI' },
+    { asetId: cbnAsetMap['AST-CBN-TNS-01'].id, jenisKegiatan: 'KALIBRASI_INTERNAL', tanggalJadwal: next14Days, pelaksanaVendor: 'Teknisi Elektromedis Internal Faskes', biayaPemeliharaan: 0, hasilKegiatan: 'TERJADWAL', catatan: 'Kalibrasi rutin sensor manset.', status: 'TERJADWAL' },
+    { asetId: cbnAsetMap['AST-CBN-USG-01'].id, jenisKegiatan: 'KALIBRASI_BFPK_EKSTERNAL', tanggalJadwal: new Date('2026-02-15'), tanggalPelaksanaan: new Date('2026-02-18'), tanggalKalibrasiExpired: new Date('2027-02-18'), pelaksanaVendor: 'BPFK Jakarta', biayaPemeliharaan: 2800000, nomorSertifikatKalibrasi: 'BPFK-JKT-USG-2026-009', hasilKegiatan: 'LAIK_PAKAI', catatan: 'Uji probe & keselamatan listrik laik pakai.', status: 'SELESAI' },
+    { asetId: cbnAsetMap['AST-CBN-STRL-01'].id, jenisKegiatan: 'KALIBRASI_BFPK_EKSTERNAL', tanggalJadwal: new Date('2026-01-20'), tanggalPelaksanaan: new Date('2026-01-22'), tanggalKalibrasiExpired: new Date('2027-01-22'), pelaksanaVendor: 'BPFK Surabaya', biayaPemeliharaan: 1800000, nomorSertifikatKalibrasi: 'SERT-BPFK-STR-2026-041', hasilKegiatan: 'LAIK_PAKAI', catatan: 'Uji suhu 134°C dan tekanan chamber normal.', status: 'SELESAI' },
+    { asetId: cbnAsetMap['AST-CBN-KULK-01'].id, jenisKegiatan: 'PEMELIHARAAN_RUTIN', tanggalJadwal: new Date('2026-09-01'), tanggalPelaksanaan: new Date('2026-09-02'), pelaksanaVendor: 'Teknisi Cold-Chain Bio Farma / Dinkes', biayaPemeliharaan: 750000, hasilKegiatan: 'SELESAI_SERVIS', catatan: 'Kalibrasi sensor suhu kulkas vaksin 2-8°C.', status: 'SELESAI' },
+    { asetId: astSkm.id, jenisKegiatan: 'KALIBRASI_BFPK_EKSTERNAL', tanggalJadwal: new Date('2026-02-10'), tanggalPelaksanaan: new Date('2026-02-12'), tanggalKalibrasiExpired: new Date('2027-02-12'), pelaksanaVendor: 'BPFK Jakarta', biayaPemeliharaan: 1200000, nomorSertifikatKalibrasi: 'SERT-BPFK-SKM-001', hasilKegiatan: 'LAIK_PAKAI', catatan: 'Kalibrasi tensimeter Sukamakmur.', status: 'SELESAI' }
+  ];
+
+  for (const p of pemeliharaanData) {
+    const exists = await prisma.riwayatPemeliharaanAset.findFirst({
+      where: { asetId: p.asetId, jenisKegiatan: p.jenisKegiatan }
+    });
+    if (exists) {
+      await prisma.riwayatPemeliharaanAset.update({ where: { id: exists.id }, data: p });
+    } else {
+      await prisma.riwayatPemeliharaanAset.create({ data: p });
+    }
+  }
 
   // ==============================================================
   // ==============================================================

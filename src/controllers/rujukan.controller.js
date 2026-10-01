@@ -6,7 +6,7 @@ const rujukanService = require('../services/rujukan.service');
  */
 const getAntrianRujukan = async (req, res, next) => {
   try {
-    const rujukanList = await rujukanService.getAntrianRujukan();
+    const rujukanList = await rujukanService.getAntrianRujukan(req.user);
     res.json({
       status: 'success',
       data: rujukanList

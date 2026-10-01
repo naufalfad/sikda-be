@@ -25,6 +25,7 @@ const router = express.Router();
 const imunisasiRoute = require('./imunisasi.routes');
 
 const dinkesRoute = require('./dinkes.routes');
+const portalPasienRoute = require('./portalPasien.routes');
 
 const defaultRoutes = [
   {
@@ -122,6 +123,10 @@ const defaultRoutes = [
   {
     path: '/dinkes',
     route: dinkesRoute,
+  },
+  {
+    path: '/portal-pasien',
+    route: portalPasienRoute,
   }
 ];
 
