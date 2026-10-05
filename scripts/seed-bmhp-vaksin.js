@@ -108,17 +108,19 @@ async function main() {
     const stokCibinong = isCriticalCibinong ? 8 : (b.kodeObat === 'BMHP-007' ? 45 : 120);
     const minCibinong = isCriticalCibinong ? 30 : 20;
 
+    const batchBMHP = `BCH-BMHP-2026-${b.kodeObat.split('-')[1]}`;
+
     await prisma.stokObatFaskes.upsert({
       where: {
-        faskesId_obatId: {
+        faskesId_obatId_noBatch: {
           faskesId: faskesCibinong.id,
-          obatId: item.id
+          obatId: item.id,
+          noBatch: batchBMHP
         }
       },
       update: {
         stok: stokCibinong,
         stokMinimum: minCibinong,
-        noBatch: `BCH-BMHP-2026-${b.kodeObat.split('-')[1]}`,
         tanggalExpired: new Date('2028-06-30')
       },
       create: {
@@ -126,7 +128,7 @@ async function main() {
         obatId: item.id,
         stok: stokCibinong,
         stokMinimum: minCibinong,
-        noBatch: `BCH-BMHP-2026-${b.kodeObat.split('-')[1]}`,
+        noBatch: batchBMHP,
         tanggalExpired: new Date('2028-06-30')
       }
     });
@@ -138,15 +140,15 @@ async function main() {
 
     await prisma.stokObatFaskes.upsert({
       where: {
-        faskesId_obatId: {
+        faskesId_obatId_noBatch: {
           faskesId: faskesSuka.id,
-          obatId: item.id
+          obatId: item.id,
+          noBatch: batchBMHP
         }
       },
       update: {
         stok: stokSuka,
         stokMinimum: minSuka,
-        noBatch: `BCH-BMHP-2026-${b.kodeObat.split('-')[1]}`,
         tanggalExpired: new Date('2028-06-30')
       },
       create: {
@@ -154,7 +156,7 @@ async function main() {
         obatId: item.id,
         stok: stokSuka,
         stokMinimum: minSuka,
-        noBatch: `BCH-BMHP-2026-${b.kodeObat.split('-')[1]}`,
+        noBatch: batchBMHP,
         tanggalExpired: new Date('2028-06-30')
       }
     });

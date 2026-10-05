@@ -26,6 +26,7 @@ const imunisasiRoute = require('./imunisasi.routes');
 
 const dinkesRoute = require('./dinkes.routes');
 const portalPasienRoute = require('./portalPasien.routes');
+const virtualAssistantRoute = require('./virtualAssistant.routes');
 
 const defaultRoutes = [
   {
@@ -127,6 +128,10 @@ const defaultRoutes = [
   {
     path: '/portal-pasien',
     route: portalPasienRoute,
+  },
+  {
+    path: '/virtual-assistant',
+    route: virtualAssistantRoute,
   }
 ];
 

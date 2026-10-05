@@ -594,65 +594,65 @@ async function main() {
 
   // Puskesmas Cibinong
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-001'].id } },
-    update: { stok: 800, noBatch: 'BCH-CBN-OBT-001', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-001'].id, noBatch: 'BCH-CBN-OBT-001' } },
+    update: { stok: 800, tanggalExpired: defaultExp },
     create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-001'].id, stok: 800, stokMinimum: 50, noBatch: 'BCH-CBN-OBT-001', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-002'].id } },
-    update: { stok: 450, noBatch: 'BCH-CBN-OBT-002', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-002'].id, noBatch: 'BCH-CBN-OBT-002' } },
+    update: { stok: 450, tanggalExpired: defaultExp },
     create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-002'].id, stok: 450, stokMinimum: 30, noBatch: 'BCH-CBN-OBT-002', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-003'].id } },
-    update: { stok: 200, noBatch: 'BCH-CBN-OBT-003', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-003'].id, noBatch: 'BCH-CBN-OBT-003' } },
+    update: { stok: 200, tanggalExpired: defaultExp },
     create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-003'].id, stok: 200, stokMinimum: 25, noBatch: 'BCH-CBN-OBT-003', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-004'].id } },
-    update: { stok: 200, noBatch: 'BCH-CBN-OBT-004', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-004'].id, noBatch: 'BCH-CBN-OBT-004' } },
+    update: { stok: 200, tanggalExpired: defaultExp },
     create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-004'].id, stok: 200, stokMinimum: 25, noBatch: 'BCH-CBN-OBT-004', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-OAT'].id } },
-    update: { stok: 200, noBatch: 'BCH-CBN-OBT-OAT', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-OAT'].id, noBatch: 'BCH-CBN-OBT-OAT' } },
+    update: { stok: 200, tanggalExpired: defaultExp },
     create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-OAT'].id, stok: 200, stokMinimum: 20, noBatch: 'BCH-CBN-OBT-OAT', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-ORALIT'].id } },
-    update: { stok: 200, noBatch: 'BCH-CBN-OBT-ORALIT', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-ORALIT'].id, noBatch: 'BCH-CBN-OBT-ORALIT' } },
+    update: { stok: 200, tanggalExpired: defaultExp },
     create: { faskesId: faskesCibinong.id, obatId: obatMap['OBT-ORALIT'].id, stok: 200, stokMinimum: 25, noBatch: 'BCH-CBN-OBT-ORALIT', tanggalExpired: defaultExp }
   });
 
   // Puskesmas Sukamakmur (Kritis: Paracetamol menipis!)
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-001'].id } },
-    update: { stok: 8, noBatch: 'BCH-SKM-OBT-001', tanggalExpired: defaultExp }, // DIBAWAH MINIMUM (Pemicu Alert Dinkes!)
+    where: { faskesId_obatId_noBatch: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-001'].id, noBatch: 'BCH-SKM-OBT-001' } },
+    update: { stok: 8, tanggalExpired: defaultExp }, // DIBAWAH MINIMUM (Pemicu Alert Dinkes!)
     create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-001'].id, stok: 8, stokMinimum: 25, noBatch: 'BCH-SKM-OBT-001', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-002'].id } },
-    update: { stok: 120, noBatch: 'BCH-SKM-OBT-002', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-002'].id, noBatch: 'BCH-SKM-OBT-002' } },
+    update: { stok: 120, tanggalExpired: defaultExp },
     create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-002'].id, stok: 120, stokMinimum: 20, noBatch: 'BCH-SKM-OBT-002', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-003'].id } },
-    update: { stok: 120, noBatch: 'BCH-SKM-OBT-003', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-003'].id, noBatch: 'BCH-SKM-OBT-003' } },
+    update: { stok: 120, tanggalExpired: defaultExp },
     create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-003'].id, stok: 120, stokMinimum: 20, noBatch: 'BCH-SKM-OBT-003', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-004'].id } },
-    update: { stok: 120, noBatch: 'BCH-SKM-OBT-004', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-004'].id, noBatch: 'BCH-SKM-OBT-004' } },
+    update: { stok: 120, tanggalExpired: defaultExp },
     create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-004'].id, stok: 120, stokMinimum: 20, noBatch: 'BCH-SKM-OBT-004', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-OAT'].id } },
-    update: { stok: 80, noBatch: 'BCH-SKM-OBT-OAT', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-OAT'].id, noBatch: 'BCH-SKM-OBT-OAT' } },
+    update: { stok: 80, tanggalExpired: defaultExp },
     create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-OAT'].id, stok: 80, stokMinimum: 15, noBatch: 'BCH-SKM-OBT-OAT', tanggalExpired: defaultExp }
   });
   await prisma.stokObatFaskes.upsert({
-    where: { faskesId_obatId: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-ORALIT'].id } },
-    update: { stok: 15, noBatch: 'BCH-SKM-OBT-ORALIT', tanggalExpired: defaultExp },
+    where: { faskesId_obatId_noBatch: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-ORALIT'].id, noBatch: 'BCH-SKM-OBT-ORALIT' } },
+    update: { stok: 15, tanggalExpired: defaultExp },
     create: { faskesId: faskesSukamakmur.id, obatId: obatMap['OBT-ORALIT'].id, stok: 15, stokMinimum: 20, noBatch: 'BCH-SKM-OBT-ORALIT', tanggalExpired: defaultExp }
   });
 

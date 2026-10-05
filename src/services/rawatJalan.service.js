@@ -135,13 +135,19 @@ const getAntrianDokter = async (user) => {
   // Dokter/Perawat hanya melihat antrian dari faskes tempat bertugas
   applyFaskesScope(whereClause, user);
 
-  // Filter isolasi data Poliklinik: 
-  // Dokter/Perawat hanya melihat antrian jika pasien masuk ke Poli-nya.
-  if (user && (user.role === 'DOKTER' || user.role === 'PERAWAT') && user.poliklinikId) {
+  // Filter isolasi data Poliklinik & Antrean: 
+  // - Dokter: Hanya antrean khusus dirinya ATAU antrean poli yang belum diarahkan ke dokter spesifik (pool umum poli).
+  // - Perawat: Semua antrean dalam poliklinik tempat bertugas untuk screening & TTV.
+  if (user && user.role === 'DOKTER') {
     whereClause.OR = [
-      { poliklinikId: user.poliklinikId },
-      { dokterTujuanId: user.id }
+      { dokterTujuanId: user.id },
+      {
+        poliklinikId: user.poliklinikId,
+        dokterTujuanId: null
+      }
     ];
+  } else if (user && user.role === 'PERAWAT' && user.poliklinikId) {
+    whereClause.poliklinikId = user.poliklinikId;
   }
 
   let kunjungans = await prisma.kunjungan.findMany({
@@ -157,6 +163,15 @@ const getAntrianDokter = async (user) => {
       orderLab: {
         include: {
           details: true
+        }
+      },
+      resep: {
+        include: {
+          details: {
+            include: {
+              obat: true
+            }
+          }
         }
       }
     }
@@ -203,23 +218,30 @@ const getAntrianDokter = async (user) => {
 };
 
 /**
- * Get riwayat rekam medis (pasien selesai) untuk dokter
+ * Get riwayat rekam medis (pasien selesai) untuk dokter di faskes
+ * Proteksi Keamanan: Dokter hanya melihat riwayat pasien yang pernah ia tangani secara langsung.
  */
-const getRiwayatDokter = async (user) => {
+const getRiwayatDokter = async (user, query = {}) => {
   const whereClause = {
     statusKunjungan: {
-      in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG'],
+      in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR'],
     },
   };
 
   // Filter isolasi multi-tenant Faskes:
   applyFaskesScope(whereClause, user);
 
+  // Jika user adalah DOKTER: Batasi hanya pada pasien yang pernah ia tangani
   if (user && user.role === 'DOKTER') {
     whereClause.OR = [
-      { poliklinikId: user.poliklinikId },
-      { dokterTujuanId: user.id }
+      { dokterTujuanId: user.id },
+      { rekamMedis: { dokterId: user.id } }
     ];
+  }
+
+  // Jika ada filter spesifik poliklinik (misal 'Poli Gigi' atau 'Poli Umum')
+  if (query.poli && query.poli !== 'ALL') {
+    whereClause.poliklinikId = query.poli;
   }
 
   const kunjungans = await prisma.kunjungan.findMany({
@@ -248,17 +270,83 @@ const getRiwayatDokter = async (user) => {
 
 /**
  * Get seluruh riwayat kunjungan detail satu pasien berdasarkan noRM
+ * Proteksi Keamanan (Active Therapeutic Relationship):
+ * Dokter HANYA diizinkan membuka berkas rekam medis jika:
+ * 1. Dokter pernah menangani pasien ini di masa lalu (Historical Care)
+ * 2. ATAU pasien saat ini sedang aktif ditugaskan/diantrekan ke dokter ini / poli dokter ini (Active Assignment)
  */
-const getRiwayatPasienByRM = async (noRM) => {
+const getRiwayatPasienByRM = async (noRM, user) => {
   const pasien = await prisma.pasien.findUnique({
     where: { noRM },
-    include: {
-      kunjungans: {
-        where: {
-          statusKunjungan: {
-            in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG'],
-          },
+  });
+
+  if (!pasien) {
+    const err = new Error('Data pasien tidak ditemukan');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // VALIDASI HAK AKSES KHUSUS DOKTER:
+  if (user && user.role === 'DOKTER') {
+    const faskesFilter = user.faskesId ? { faskesId: user.faskesId } : {};
+
+    // 1. Cek riwayat penanganan masa lalu oleh dokter ini
+    const pernahMenangani = await prisma.kunjungan.findFirst({
+      where: {
+        pasienId: pasien.id,
+        ...faskesFilter,
+        statusKunjungan: {
+          in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR']
         },
+        OR: [
+          { dokterTujuanId: user.id },
+          { rekamMedis: { dokterId: user.id } }
+        ]
+      }
+    });
+
+    // 2. Cek penugasan pelayanan aktif (antrean aktif di dokter ini atau di pool umum poli dokter ini)
+    const antrianAktif = await prisma.kunjungan.findFirst({
+      where: {
+        pasienId: pasien.id,
+        ...faskesFilter,
+        statusKunjungan: {
+          in: ['MENUNGGU_DOKTER', 'DIPERIKSA', 'MENUNGGU_LAB', 'MENUNGGU_RADIOLOGI', 'ANTRI_POLI']
+        },
+        OR: [
+          { dokterTujuanId: user.id },
+          ...(user.poliklinikId ? [{ poliklinikId: user.poliklinikId, dokterTujuanId: null }] : [])
+        ]
+      }
+    });
+
+    if (!pernahMenangani && !antrianAktif) {
+      const err = new Error('Akses Ditolak: Anda tidak memiliki wewenang klinis aktif untuk mengakses berkas rekam medis pasien ini. Rekam medis hanya dapat dibuka jika Anda pernah merawat pasien ini atau pasien sedang aktif ditugaskan ke antrean pemeriksaan Anda.');
+      err.statusCode = 403;
+      throw err;
+    }
+  }
+
+  // Tentukan filter kunjungan pasien (terisolasi per Faskes):
+  const kunjungansWhere = {
+    statusKunjungan: {
+      in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR'],
+    },
+  };
+
+  // Batasi kunjungan sesuai Faskes pengguna (multi-tenant isolation)
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
+    kunjungansWhere.faskesId = user.faskesId;
+  }
+
+  const detailPasien = await prisma.pasien.findUnique({
+    where: { noRM },
+    include: {
+      alamat: true,
+      kontak: true,
+      penjamin: true,
+      kunjungans: {
+        where: kunjungansWhere,
         orderBy: [
           { tanggalRegistrasi: 'desc' },
           { jamRegistrasi: 'desc' },
@@ -285,19 +373,16 @@ const getRiwayatPasienByRM = async (noRM) => {
           },
           orderLab: {
             include: { details: true }
+          },
+          orderRadiologi: {
+            include: { details: true }
           }
         },
       },
     },
   });
 
-  if (!pasien) {
-    const err = new Error('Data pasien tidak ditemukan');
-    err.statusCode = 404;
-    throw err;
-  }
-
-  return pasien;
+  return detailPasien;
 };
 
 /**
@@ -307,7 +392,7 @@ const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
   return await prisma.$transaction(async (tx) => {
     const kunjungan = await tx.kunjungan.findUnique({
       where: { id: kunjunganId },
-      include: { rekamMedis: true },
+      include: { rekamMedis: true, dokterTujuan: true },
     });
 
     if (!kunjungan) {
@@ -322,6 +407,14 @@ const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
       throw err;
     }
 
+    // Jika pasien sudah secara khusus ditugaskan ke dokter lain, tolak jika bukan dokter bersangkutan
+    if (kunjungan.dokterTujuanId && dokterId && kunjungan.dokterTujuanId !== dokterId) {
+      const namaDokter = kunjungan.dokterTujuan?.namaLengkap || 'dokter lain';
+      const err = new Error(`Pasien ini terdaftar khusus untuk antrean pemeriksaan ${namaDokter}. Anda tidak dapat memulai pemeriksaan tanpa pengalihan antrean.`);
+      err.statusCode = 403;
+      throw err;
+    }
+
     const effectiveDokterId = dokterId || kunjungan.dokterTujuanId || null;
 
     // Jika sudah ada rekam medis (sudah pernah dimulai), kembalikan saja
@@ -330,8 +423,19 @@ const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
       if (kunjungan.statusKunjungan === 'MENUNGGU_DOKTER') {
         await tx.kunjungan.update({
           where: { id: kunjunganId },
-          data: { statusKunjungan: 'DIPERIKSA' },
+          data: { 
+            statusKunjungan: 'DIPERIKSA',
+            dokterTujuanId: effectiveDokterId
+          },
         });
+      }
+
+      if (!kunjungan.rekamMedis.dokterId && effectiveDokterId) {
+        const updatedRM = await tx.rekamMedis.update({
+          where: { id: kunjungan.rekamMedis.id },
+          data: { dokterId: effectiveDokterId }
+        });
+        return updatedRM;
       }
       return kunjungan.rekamMedis;
     }
@@ -342,6 +446,7 @@ const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
         where: { id: kunjunganId },
         data: {
           statusKunjungan: 'DIPERIKSA',
+          dokterTujuanId: effectiveDokterId,
           waktuPemeriksaanMulai: new Date(),
         },
       });
@@ -550,19 +655,35 @@ const selesaikanPemeriksaan = async (kunjunganId, user) => {
       data: updateData,
     });
 
-    // Status kunjungan belum SELESAI, menunggu tindak lanjut (Resep/Rujukan/Pulang)
+    // Periksa apakah kunjungan saat ini memiliki resep obat aktif
+    const existingResep = await tx.resep.findFirst({
+      where: { kunjunganId, status: { not: 'BATAL' } },
+    });
+
+    // Jika ada resep obat, arahkan ke MENUNGGU_FARMASI (pasien antre bayar di Kasir & ambil obat di Farmasi)
+    // Jika tidak ada resep obat, langsung arahkan ke MENUNGGU_KASIR
+    const targetStatus = existingResep ? 'MENUNGGU_FARMASI' : 'MENUNGGU_KASIR';
+
     await tx.kunjungan.update({
       where: { id: kunjunganId },
       data: {
-        statusKunjungan: 'MENUNGGU_TINDAK_LANJUT',
-        satusehat_sync_status: 'PENDING'
+        statusKunjungan: targetStatus,
+        satusehat_sync_status: 'PENDING',
       },
     });
 
     return updatedRm;
   });
 
-  console.log(`[Rawat Jalan] Pemeriksaan selesai untuk kunjungan ${kunjunganId}. Menunggu tindak lanjut (Resep/Rujukan/Pulang).`);
+  // Sinkronisasi tagihan kasir secara otomatis
+  try {
+    await kasirService.generateTagihan(kunjunganId);
+    console.log(`[Kasir] Tagihan berhasil disinkronkan untuk kunjungan ${kunjunganId}`);
+  } catch (errTagihan) {
+    console.error(`[Kasir Error] Gagal generate tagihan:`, errTagihan.message);
+  }
+
+  console.log(`[Rawat Jalan] Pemeriksaan selesai untuk kunjungan ${kunjunganId}.`);
   return rm;
 };
 
@@ -754,6 +875,15 @@ const simpanResep = async (kunjunganId, user, resepArr) => {
   const penginputId = user.role === 'PERAWAT' ? user.id : null;
 
   const result = await prisma.$transaction(async (tx) => {
+    // Hapus resep yang masih MENUNGGU_FARMASI sebelumnya jika ada, agar resep tidak ganda/stale
+    const oldReseps = await tx.resep.findMany({
+      where: { kunjunganId, status: 'MENUNGGU_FARMASI' }
+    });
+    for (const old of oldReseps) {
+      await tx.resepDetail.deleteMany({ where: { resepId: old.id } });
+      await tx.resep.delete({ where: { id: old.id } });
+    }
+
     // Buat record Resep
     const resep = await tx.resep.create({
       data: {
@@ -765,13 +895,14 @@ const simpanResep = async (kunjunganId, user, resepArr) => {
       },
     });
 
-    // Buat detail resep
+    // Buat detail resep dengan informasi batch yang dialokasikan/dipilih
     const details = resepArr.map((r) => ({
       resepId: resep.id,
       obatId: r.obatId,
       jumlah: r.qty,
       aturanPakai: r.signa,
       catatan: r.catatan || null,
+      noBatch: r.noBatch || null,
     }));
 
     await tx.resepDetail.createMany({ data: details });

@@ -6,7 +6,7 @@ const prisma = require('../config/prisma');
 // 1. MASTER OBAT
 // ==========================================
 
-const getMasterObat = async (search) => {
+const getMasterObat = async (search, faskesId = null) => {
   const whereClause = search
     ? {
         OR: [
@@ -17,10 +17,65 @@ const getMasterObat = async (search) => {
       }
     : {};
 
-  return await prisma.masterObat.findMany({
+  const obats = await prisma.masterObat.findMany({
     where: whereClause,
+    include: {
+      stokFaskes: faskesId
+        ? {
+            where: { faskesId, statusAktif: true },
+            orderBy: { tanggalExpired: 'asc' }
+          }
+        : {
+            where: { statusAktif: true },
+            orderBy: { tanggalExpired: 'asc' }
+          }
+    },
     take: 100,
     orderBy: { namaObat: 'asc' },
+  });
+
+  const now = new Date();
+  return obats.map((obat) => {
+    let fefoAssigned = false;
+    const enrichedBatches = (obat.stokFaskes || []).map((b) => {
+      let sisaHariExpired = null;
+      let statusExpired = 'AMAN';
+      if (b.tanggalExpired) {
+        const diffMs = new Date(b.tanggalExpired).getTime() - now.getTime();
+        sisaHariExpired = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        if (sisaHariExpired < 0) {
+          statusExpired = 'KADALUWARSA';
+        } else if (sisaHariExpired <= 60) {
+          statusExpired = 'SEGERA_KADALUWARSA'; // < 60 hari (Prioritas FEFO tinggi)
+        } else if (sisaHariExpired <= 90) {
+          statusExpired = 'WASPADA';
+        }
+      }
+
+      // Prioritas FEFO: batch pertama yang stoknya masih ada (>0) dan belum kedaluwarsa
+      let isPrioritasFefo = false;
+      if (!fefoAssigned && b.stok > 0 && statusExpired !== 'KADALUWARSA') {
+        isPrioritasFefo = true;
+        fefoAssigned = true;
+      }
+
+      return {
+        ...b,
+        sisaHariExpired,
+        statusExpired,
+        isPrioritasFefo
+      };
+    });
+
+    const totalStok = enrichedBatches.reduce((acc, b) => acc + b.stok, 0);
+    const prioritasFefoBatch = enrichedBatches.find(b => b.isPrioritasFefo) || enrichedBatches.find(b => b.stok > 0) || null;
+
+    return {
+      ...obat,
+      stokFaskes: enrichedBatches,
+      totalStok,
+      prioritasFefoBatch
+    };
   });
 };
 
@@ -38,16 +93,21 @@ const createMasterObat = async (data) => {
 };
 
 const updateMasterObat = async (id, data) => {
+  const updateData = {
+    kodeObat: data.kodeObat,
+    namaObat: data.namaObat,
+    kategori: data.kategori,
+    sediaan: data.sediaan,
+    harga: parseFloat(data.harga) || 0,
+  };
+
+  if (data.gambarUrl !== undefined) {
+    updateData.gambarUrl = data.gambarUrl;
+  }
+
   return await prisma.masterObat.update({
     where: { id },
-    data: {
-      kodeObat: data.kodeObat,
-      namaObat: data.namaObat,
-      kategori: data.kategori,
-      sediaan: data.sediaan,
-      harga: parseFloat(data.harga) || 0,
-      gambarUrl: data.gambarUrl || null,
-    },
+    data: updateData,
   });
 };
 
@@ -155,12 +215,63 @@ const deleteMasterModality = async (id) => {
 // 4. MASTER VAKSIN (IMUNISASI)
 // ==========================================
 
-const getMasterVaksin = async () => {
-  return await prisma.masterVaksin.findMany({
+const getMasterVaksin = async (faskesId = null) => {
+  const vaksins = await prisma.masterVaksin.findMany({
     include: {
-      batchVaksin: true,
+      batchVaksin: faskesId
+        ? {
+            where: { faskesId, statusAktif: true },
+            orderBy: { tanggalExpired: 'asc' }
+          }
+        : {
+            where: { statusAktif: true },
+            orderBy: { tanggalExpired: 'asc' }
+          }
     },
     orderBy: { namaVaksin: 'asc' },
+  });
+
+  const now = new Date();
+  return vaksins.map((v) => {
+    let fefoAssigned = false;
+    const enrichedBatches = (v.batchVaksin || []).map((b) => {
+      let sisaHariExpired = null;
+      let statusExpired = 'AMAN';
+      if (b.tanggalExpired) {
+        const diffMs = new Date(b.tanggalExpired).getTime() - now.getTime();
+        sisaHariExpired = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        if (sisaHariExpired < 0) {
+          statusExpired = 'KADALUWARSA';
+        } else if (sisaHariExpired <= 60) {
+          statusExpired = 'SEGERA_KADALUWARSA';
+        } else if (sisaHariExpired <= 90) {
+          statusExpired = 'WASPADA';
+        }
+      }
+
+      let isPrioritasFefo = false;
+      if (!fefoAssigned && b.stok > 0 && statusExpired !== 'KADALUWARSA') {
+        isPrioritasFefo = true;
+        fefoAssigned = true;
+      }
+
+      return {
+        ...b,
+        sisaHariExpired,
+        statusExpired,
+        isPrioritasFefo
+      };
+    });
+
+    const totalStok = enrichedBatches.reduce((acc, b) => acc + b.stok, 0);
+    const prioritasFefoBatch = enrichedBatches.find(b => b.isPrioritasFefo) || enrichedBatches.find(b => b.stok > 0) || null;
+
+    return {
+      ...v,
+      batchVaksin: enrichedBatches,
+      totalStok,
+      prioritasFefoBatch
+    };
   });
 };
 

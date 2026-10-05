@@ -10,6 +10,20 @@ const getAntrianKasir = async (user) => {
         tagihan: {
           statusTagihan: 'BELUM_LUNAS'
         }
+      },
+      { 
+        statusKunjungan: 'MENUNGGU_TINDAK_LANJUT',
+        tagihan: {
+          statusTagihan: 'BELUM_LUNAS'
+        }
+      },
+      {
+        tagihan: {
+          statusTagihan: 'BELUM_LUNAS'
+        },
+        statusKunjungan: {
+          notIn: ['BATAL', 'SELESAI']
+        }
       }
     ]
   };
@@ -52,9 +66,6 @@ const generateTagihan = async (kunjunganId) => {
       },
       resep: {
         include: { details: { include: { obat: true } } },
-      },
-      orderLab: {
-        include: { details: true },
       },
       tagihan: true,
     },
@@ -122,7 +133,8 @@ const generateTagihan = async (kunjunganId) => {
 
   // 3. Obat / Resep (Dinamis dari MasterObat.harga — Dynamic Snapshot)
   if (kunjungan.resep && kunjungan.resep.length > 0) {
-    for (const r of kunjungan.resep) {
+    const activeReseps = kunjungan.resep.filter(r => r.status !== 'BATAL');
+    for (const r of activeReseps) {
       if (r.details) {
         for (const detail of r.details) {
           // Ambil harga asli dari MasterObat
@@ -139,25 +151,6 @@ const generateTagihan = async (kunjunganId) => {
           totalBiaya += subTotalObat;
         }
       }
-    }
-  }
-
-  // 4. Laboratorium (Dinamis dari MasterLaboratorium.hargaTarif — Dynamic Snapshot)
-  if (kunjungan.orderLab && kunjungan.orderLab.details) {
-    // Ambil master lab untuk lookup tarif
-    const masterLabs = await prisma.masterLaboratorium.findMany();
-    const labTarifMap = new Map(masterLabs.map(m => [m.parameter.toLowerCase(), m.hargaTarif]));
-
-    for (const detail of kunjungan.orderLab.details) {
-      const tarifLab = labTarifMap.get(detail.parameter.toLowerCase()) || 30000;
-      details.push({
-        namaItem: `Lab: ${detail.parameter}`,
-        kategori: 'Laboratorium',
-        jumlah: 1,
-        hargaSatuan: tarifLab,
-        subTotal: tarifLab,
-      });
-      totalBiaya += tarifLab;
     }
   }
 

@@ -23,7 +23,8 @@ const uploadToCloudinary = (buffer) => {
 const getMasterObat = async (req, res, next) => {
   try {
     const { search } = req.query;
-    const data = await masterService.getMasterObat(search);
+    const faskesId = req.query.faskesId || req.user?.faskesId || null;
+    const data = await masterService.getMasterObat(search, faskesId);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
@@ -158,7 +159,8 @@ const deleteMasterModality = async (req, res, next) => {
 
 const getMasterVaksin = async (req, res, next) => {
   try {
-    const data = await masterService.getMasterVaksin();
+    const faskesId = req.query.faskesId || req.user?.faskesId || null;
+    const data = await masterService.getMasterVaksin(faskesId);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

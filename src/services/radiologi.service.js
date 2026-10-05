@@ -24,7 +24,7 @@ const radiologiService = {
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
     const acsn = `ACSN-${todayStr}-${randomSuffix}`;
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // Hapus order lama jika ini re-run test pada kunjungan 1-to-1 yang sama
       await tx.orderRadiologi.deleteMany({
         where: { kunjunganId },
@@ -56,14 +56,20 @@ const radiologiService = {
         },
       });
 
-      // Update status kunjungan
-      await tx.kunjungan.update({
-        where: { id: kunjunganId },
-        data: { statusKunjungan: 'MENUNGGU_RADIOLOGI' },
-      });
+      // Jangan ubah status kunjungan menjadi MENUNGGU_RADIOLOGI agar dokter tetap bisa melanjutkan pemeriksaan.
+      // Jika status masih MENUNGGU_DOKTER, kita set ke DIPERIKSA.
+      const kunjunganCurrent = await tx.kunjungan.findUnique({ where: { id: kunjunganId } });
+      if (kunjunganCurrent && kunjunganCurrent.statusKunjungan === 'MENUNGGU_DOKTER') {
+        await tx.kunjungan.update({
+          where: { id: kunjunganId },
+          data: { statusKunjungan: 'DIPERIKSA' },
+        });
+      }
 
       return newOrder;
     });
+
+    return result;
   },
 
   /**

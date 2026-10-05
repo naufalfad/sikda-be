@@ -11,7 +11,7 @@ const getAntrianDokter = async (req, res, next) => {
 
 const getRiwayatDokter = async (req, res, next) => {
   try {
-    const data = await rawatJalanService.getRiwayatDokter(req.user);
+    const data = await rawatJalanService.getRiwayatDokter(req.user, req.query);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
@@ -21,7 +21,7 @@ const getRiwayatDokter = async (req, res, next) => {
 const getRiwayatPasienByRM = async (req, res, next) => {
   try {
     const { noRM } = req.params;
-    const data = await rawatJalanService.getRiwayatPasienByRM(noRM);
+    const data = await rawatJalanService.getRiwayatPasienByRM(noRM, req.user);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);

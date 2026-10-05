@@ -135,39 +135,66 @@ exports.prosesResep = async (req, res) => {
         throw new Error('Pasien belum melakukan pembayaran di Kasir. Mohon arahkan pasien ke Kasir terlebih dahulu.');
       }
 
-      // 2. Kurangi stok obat fisik di Faskes terkait
+      // 2. Kurangi stok obat fisik di Faskes terkait dengan Multi-Batch & Auto-FEFO
       const targetFaskesId = req.user?.faskesId || resep.kunjungan?.poliklinik?.faskesId;
 
       for (const detail of resep.details) {
         if (targetFaskesId) {
-          const stokFaskes = await tx.stokObatFaskes.findUnique({
-            where: {
-              faskesId_obatId: {
-                faskesId: targetFaskesId,
-                obatId: detail.obatId
-              }
-            },
-            include: { obat: true }
-          });
-
-          if (stokFaskes) {
-            if (stokFaskes.stok < detail.jumlah) {
-              throw new Error(`Stok obat ${stokFaskes.obat?.namaObat || 'obat'} di faskes ini tidak mencukupi. Tersedia: ${stokFaskes.stok}, Diminta: ${detail.jumlah}`);
-            }
-
-            await tx.stokObatFaskes.update({
+          // Jika dokter/resep sudah mengunci nomor batch spesifik
+          if (detail.noBatch) {
+            const specificBatch = await tx.stokObatFaskes.findUnique({
               where: {
-                faskesId_obatId: {
+                faskesId_obatId_noBatch: {
                   faskesId: targetFaskesId,
-                  obatId: detail.obatId
+                  obatId: detail.obatId,
+                  noBatch: detail.noBatch
                 }
               },
-              data: {
-                stok: {
-                  decrement: detail.jumlah
+              include: { obat: true }
+            });
+
+            if (specificBatch && specificBatch.stok >= detail.jumlah) {
+              await tx.stokObatFaskes.update({
+                where: { id: specificBatch.id },
+                data: {
+                  stok: { decrement: detail.jumlah }
                 }
+              });
+              continue;
+            }
+          }
+
+          // Auto-FEFO: Cari seluruh batch aktif dengan stok > 0, urutkan dari tanggal kedaluwarsa terdekat
+          const batches = await tx.stokObatFaskes.findMany({
+            where: {
+              faskesId: targetFaskesId,
+              obatId: detail.obatId,
+              statusAktif: true,
+              stok: { gt: 0 }
+            },
+            include: { obat: true },
+            orderBy: { tanggalExpired: 'asc' }
+          });
+
+          const totalTersedia = batches.reduce((acc, b) => acc + b.stok, 0);
+          const namaObat = batches[0]?.obat?.namaObat || detail.obat?.namaObat || 'obat';
+
+          if (totalTersedia < detail.jumlah) {
+            throw new Error(`Stok obat ${namaObat} di faskes ini tidak mencukupi. Total tersedia seluruh batch: ${totalTersedia}, Diminta: ${detail.jumlah}`);
+          }
+
+          // Pengurangan stok bertahap sesuai FEFO
+          let sisaDibutuhkan = detail.jumlah;
+          for (const batch of batches) {
+            if (sisaDibutuhkan <= 0) break;
+            const potong = Math.min(batch.stok, sisaDibutuhkan);
+            await tx.stokObatFaskes.update({
+              where: { id: batch.id },
+              data: {
+                stok: { decrement: potong }
               }
             });
+            sisaDibutuhkan -= potong;
           }
         }
       }
@@ -395,16 +422,19 @@ exports.tambahStokMasuk = async (req, res) => {
     const minStock = stokMinimum !== undefined ? parseInt(stokMinimum) : undefined;
     const expDate = tanggalExpired ? new Date(tanggalExpired) : undefined;
 
+    const batchNo = noBatch && noBatch.trim() ? noBatch.trim() : `BATCH-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
+
     const stokUpdated = await prisma.stokObatFaskes.upsert({
       where: {
-        faskesId_obatId: {
+        faskesId_obatId_noBatch: {
           faskesId,
-          obatId
+          obatId,
+          noBatch: batchNo
         }
       },
       update: {
         stok: { increment: qty },
-        ...(noBatch && { noBatch }),
+        statusAktif: true,
         ...(expDate && { tanggalExpired: expDate }),
         ...(minStock !== undefined && { stokMinimum: minStock })
       },
@@ -413,8 +443,9 @@ exports.tambahStokMasuk = async (req, res) => {
         obatId,
         stok: qty,
         stokMinimum: minStock || 10,
-        noBatch: noBatch || `BATCH-${new Date().getFullYear()}`,
-        tanggalExpired: expDate || null
+        noBatch: batchNo,
+        tanggalExpired: expDate || null,
+        statusAktif: true
       },
       include: {
         obat: true
@@ -587,7 +618,7 @@ exports.kurangiStokKeluar = async (req, res) => {
       return res.status(400).json({ status: 'error', message: 'Hanya petugas faskes yang dapat mencatat pengeluaran stok.' });
     }
 
-    const { obatId, jumlahKeluar, alasanKeluar, catatan } = req.body;
+    const { obatId, jumlahKeluar, alasanKeluar, catatan, noBatch } = req.body;
 
     if (!obatId || !jumlahKeluar || parseInt(jumlahKeluar) <= 0) {
       return res.status(400).json({ status: 'error', message: 'Obat dan jumlah pengeluaran valid wajib diisi.' });
@@ -595,33 +626,46 @@ exports.kurangiStokKeluar = async (req, res) => {
 
     const qty = parseInt(jumlahKeluar);
 
-    const existing = await prisma.stokObatFaskes.findUnique({
-      where: {
-        faskesId_obatId: {
+    let existing;
+    if (noBatch && noBatch.trim()) {
+      existing = await prisma.stokObatFaskes.findUnique({
+        where: {
+          faskesId_obatId_noBatch: {
+            faskesId,
+            obatId,
+            noBatch: noBatch.trim()
+          }
+        },
+        include: { obat: true }
+      });
+    } else {
+      // Auto-FEFO: pilih batch aktif yang paling mendekati tanggal expired
+      existing = await prisma.stokObatFaskes.findFirst({
+        where: {
           faskesId,
-          obatId
-        }
-      },
-      include: { obat: true }
-    });
+          obatId,
+          statusAktif: true,
+          stok: { gt: 0 }
+        },
+        include: { obat: true },
+        orderBy: { tanggalExpired: 'asc' }
+      });
+    }
 
     if (!existing) {
-      return res.status(404).json({ status: 'error', message: 'Item obat/BMHP ini belum terdaftar di faskes Anda.' });
+      return res.status(404).json({ status: 'error', message: 'Item obat/BMHP batch ini belum terdaftar atau tidak memiliki stok.' });
     }
 
     if (existing.stok < qty) {
       return res.status(400).json({
         status: 'error',
-        message: `Stok ${existing.obat?.namaObat} tidak mencukupi untuk dikeluarkan. Sisa stok tersedia: ${existing.stok}, diminta: ${qty}.`
+        message: `Stok ${existing.obat?.namaObat} (Batch: ${existing.noBatch}) tidak mencukupi untuk dikeluarkan. Sisa stok tersedia: ${existing.stok}, diminta: ${qty}.`
       });
     }
 
     const updated = await prisma.stokObatFaskes.update({
       where: {
-        faskesId_obatId: {
-          faskesId,
-          obatId
-        }
+        id: existing.id
       },
       data: {
         stok: { decrement: qty }
@@ -631,7 +675,7 @@ exports.kurangiStokKeluar = async (req, res) => {
 
     res.status(200).json({
       status: 'success',
-      message: `Berhasil mengeluarkan ${qty} ${updated.obat?.sediaan || 'unit'} untuk ${updated.obat?.namaObat}. Alasan: ${alasanKeluar || 'Pengeluaran Stok'}. Sisa stok: ${updated.stok}.`,
+      message: `Berhasil mengeluarkan ${qty} ${updated.obat?.sediaan || 'unit'} untuk ${updated.obat?.namaObat} (Batch: ${updated.noBatch}). Alasan: ${alasanKeluar || 'Pengeluaran Stok'}. Sisa stok: ${updated.stok}.`,
       data: updated
     });
   } catch (error) {

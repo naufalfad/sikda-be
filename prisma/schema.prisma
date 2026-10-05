@@ -662,7 +662,9 @@ model ResepDetail {
   dosisSatuan   String? // Misal: "mg"
   rutePemberian String? @default("O") // Code WHO ATC / SNOMED CT (O = Oral)
   frekuensi     Int?    @default(3) // 3 kali sehari
+  noBatch       String? // Nomor batch obat yang dipilih dokter / dialokasikan FEFO
 }
+
 
 model RujukanKeluar {
   id          String    @id @default(cuid())
@@ -1542,13 +1544,14 @@ model StokObatFaskes {
 
   stok           Int       @default(0)
   stokMinimum    Int       @default(10) // Buffer stock alert untuk Dinkes
-  noBatch        String?
+  noBatch        String    @default("DEFAULT")
   tanggalExpired DateTime?
+  statusAktif    Boolean   @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([faskesId, obatId])
+  @@unique([faskesId, obatId, noBatch])
 }
 
 // ==========================================

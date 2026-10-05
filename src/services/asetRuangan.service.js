@@ -223,15 +223,35 @@ const createBed = async (data) => {
 const updateBed = async (id, data) => {
   const updateData = { ...data };
   if (data.statusBed) {
-    if (data.statusBed === 'TERISI') updateData.operationalStatus = 'O';
-    else if (data.statusBed === 'PERBAIKAN') updateData.operationalStatus = 'C';
-    else if (data.statusBed === 'DIBERSIHKAN') updateData.operationalStatus = 'H';
-    else updateData.operationalStatus = 'U';
+    if (data.statusBed === 'TERISI') {
+      updateData.operationalStatus = 'O';
+    } else if (data.statusBed === 'PERBAIKAN') {
+      updateData.operationalStatus = 'C';
+      updateData.kunjunganAktifId = null;
+    } else if (data.statusBed === 'DIBERSIHKAN') {
+      updateData.operationalStatus = 'H';
+      updateData.kunjunganAktifId = null;
+    } else {
+      updateData.operationalStatus = 'U';
+      updateData.kunjunganAktifId = null;
+    }
   }
 
   return await prisma.tempatTidur.update({
     where: { id },
-    data: updateData
+    data: updateData,
+    include: {
+      ruangan: {
+        select: { id: true, kodeRuangan: true, namaRuangan: true, gedung: true, kategoriRuangan: true }
+      },
+      kunjunganAktif: {
+        include: {
+          pasien: {
+            select: { id: true, noRM: true, namaLengkap: true, jenisKelamin: true }
+          }
+        }
+      }
+    }
   });
 };
 
@@ -531,10 +551,39 @@ const updatePemeliharaan = async (id, data) => {
   if (data.tanggalKalibrasiExpired) payload.tanggalKalibrasiExpired = new Date(data.tanggalKalibrasiExpired);
   if (data.biayaPemeliharaan !== undefined) payload.biayaPemeliharaan = parseFloat(data.biayaPemeliharaan);
 
-  return await prisma.riwayatPemeliharaanAset.update({
+  const updated = await prisma.riwayatPemeliharaanAset.update({
     where: { id },
     data: payload
   });
+
+  // Jika status diselesaikan, pastikan hasil kegiatan valid dan perbarui kondisi operasional aset
+  if (data.status === 'SELESAI') {
+    const hasil = data.hasilKegiatan && data.hasilKegiatan !== 'TERJADWAL' 
+      ? data.hasilKegiatan 
+      : 'LAIK_PAKAI';
+    
+    // Pastikan log juga menyimpan hasil yang valid
+    if (updated.hasilKegiatan !== hasil) {
+      await prisma.riwayatPemeliharaanAset.update({
+        where: { id },
+        data: { hasilKegiatan: hasil }
+      });
+      updated.hasilKegiatan = hasil;
+    }
+
+    const isTidakLaik = hasil === 'TIDAK_LAIK_PAKAI';
+    await prisma.asetRuangan.update({
+      where: { id: updated.asetId },
+      data: {
+        kondisiAset: isTidakLaik ? 'RUSAK_BERAT' : 'BAIK',
+        statusOperasional: isTidakLaik ? 'RUSAK' : 'AKTIF_DIGUNAKAN'
+      }
+    }).catch((err) => {
+      console.warn('Gagal sync status aset setelah pemeliharaan:', err.message);
+    });
+  }
+
+  return updated;
 };
 
 // ==========================================

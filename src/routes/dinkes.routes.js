@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const dinkesController = require('../controllers/dinkes.controller');
+const dinkesAiController = require('../controllers/dinkesAi.controller');
 const { protect } = require('../middlewares/auth.middleware');
 
 // Optional protect middleware (aktifkan jika user wajib auth)
@@ -32,4 +33,11 @@ router.delete('/faskes/:id', dinkesController.deleteFaskes);
 router.get('/mutasi-nakes', dinkesController.getMutasiHistory);
 router.post('/mutasi-nakes', dinkesController.createMutasiNakes);
 
+// ==========================================
+// 4. AI AUTOMATED EXECUTIVE REPORT & BRIEFING
+// ==========================================
+router.get('/ai/report/faskes/:id', protect, dinkesAiController.getFaskesAiReport);
+router.get('/ai/report/wilayah', protect, dinkesAiController.getWilayahAiSitRep);
+
 module.exports = router;
+

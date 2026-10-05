@@ -553,6 +553,13 @@ const getVaccineMonitoring = async (query = {}) => {
 
   const summary = faskesList.map(faskes => {
     let totalDosisFaskes = 0;
+
+    // Akumulasi total stok aktif per jenis vaksin di faskes ini
+    const stokPerVaksinMap = {};
+    (faskes.batchVaksin || []).forEach(b => {
+      stokPerVaksinMap[b.vaksinId] = (stokPerVaksinMap[b.vaksinId] || 0) + b.stok;
+    });
+
     const batchDetails = (faskes.batchVaksin || []).map(b => {
       totalDosisFaskes += b.stok;
       totalDosisKabupaten += b.stok;
@@ -564,20 +571,27 @@ const getVaccineMonitoring = async (query = {}) => {
         sisaHari = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
         if (sisaHari < 0) {
           statusExpired = 'KADALUWARSA';
-          vaksinSegeraExpiredCount++;
+          if (b.stok > 0) vaksinSegeraExpiredCount++;
         } else if (sisaHari <= 60) {
           statusExpired = 'SEGERA_KADALUWARSA';
-          vaksinSegeraExpiredCount++;
+          if (b.stok > 0) vaksinSegeraExpiredCount++;
         } else if (sisaHari <= 90) {
           statusExpired = 'WASPADA';
         }
       }
 
+      const totalStokVaksinFaskes = stokPerVaksinMap[b.vaksinId] || 0;
+      const adaBatchPengganti = totalStokVaksinFaskes > 0;
+
       let statusStok = 'AMAN';
       if (b.stok === 0) {
-        statusStok = 'HABIS';
-        vaksinKritisCount++;
-      } else if (b.stok <= b.stokMinimum) {
+        if (adaBatchPengganti) {
+          statusStok = 'HABIS_TERGANTIKAN'; // Ada batch pengganti yang siap pakai di faskes
+        } else {
+          statusStok = 'HABIS'; // Benar-benar kosong di faskes
+          vaksinKritisCount++;
+        }
+      } else if (totalStokVaksinFaskes <= b.stokMinimum) {
         statusStok = 'KRITIS';
         vaksinKritisCount++;
       }
@@ -594,6 +608,8 @@ const getVaccineMonitoring = async (query = {}) => {
         statusExpired,
         stok: b.stok,
         stokMinimum: b.stokMinimum,
+        totalStokVaksinFaskes,
+        adaBatchPengganti,
         statusStok,
         suhuPenyimpanan: b.suhuPenyimpanan || '2-8°C'
       };
@@ -607,7 +623,7 @@ const getVaccineMonitoring = async (query = {}) => {
       totalDosis: totalDosisFaskes,
       jumlahBatch: batchDetails.length,
       kritisBatchCount: batchDetails.filter(b => b.statusStok === 'KRITIS' || b.statusStok === 'HABIS').length,
-      segeraExpiredCount: batchDetails.filter(b => b.statusExpired === 'SEGERA_KADALUWARSA' || b.statusExpired === 'KADALUWARSA').length,
+      segeraExpiredCount: batchDetails.filter(b => (b.statusExpired === 'SEGERA_KADALUWARSA' || b.statusExpired === 'KADALUWARSA') && b.stok > 0).length,
       vaksinList: batchDetails
     };
   });
@@ -915,6 +931,11 @@ const getFaskesById = async (id) => {
   const obatKritis = obatList.filter(s => s.stok <= s.stokMinimum);
   const bmhpKritis = bmhpList.filter(s => s.stok <= s.stokMinimum);
 
+  const stokPerVaksinMap = {};
+  (faskes.batchVaksin || []).forEach(b => {
+    stokPerVaksinMap[b.vaksinId] = (stokPerVaksinMap[b.vaksinId] || 0) + b.stok;
+  });
+
   const batchVaksinList = (faskes.batchVaksin || []).map(b => {
     let sisaHari = null;
     let statusExpired = 'AMAN';
@@ -925,6 +946,17 @@ const getFaskesById = async (id) => {
       else if (sisaHari <= 60) statusExpired = 'SEGERA_KADALUWARSA';
       else if (sisaHari <= 90) statusExpired = 'WASPADA';
     }
+
+    const totalStokVaksinFaskes = stokPerVaksinMap[b.vaksinId] || 0;
+    const adaBatchPengganti = totalStokVaksinFaskes > 0;
+
+    let statusStok = 'AMAN';
+    if (b.stok === 0) {
+      statusStok = adaBatchPengganti ? 'HABIS_TERGANTIKAN' : 'HABIS';
+    } else if (totalStokVaksinFaskes <= b.stokMinimum) {
+      statusStok = 'KRITIS';
+    }
+
     return {
       id: b.id,
       namaVaksin: b.vaksin?.namaVaksin,
@@ -933,6 +965,9 @@ const getFaskesById = async (id) => {
       noBatch: b.noBatch,
       stok: b.stok,
       stokMinimum: b.stokMinimum,
+      totalStokVaksinFaskes,
+      adaBatchPengganti,
+      statusStok,
       suhuPenyimpanan: b.suhuPenyimpanan || '2-8°C',
       tanggalExpired: b.tanggalExpired,
       sisaHari,
