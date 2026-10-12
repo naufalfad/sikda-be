@@ -49,13 +49,29 @@ router.post('/:kunjunganId/selesai', rawatJalanController.selesaikanPemeriksaan)
 // Tunda pemeriksaan (Kedaruratan / Ganti Pasien)
 router.post('/:kunjunganId/tunda', rawatJalanController.tundaPemeriksaan);
 
-// Tindak Lanjut: Simpan Resep Obat
+// Tindak Lanjut: Simpan Resep Obat & Ambil Resep Kunjungan
 router.post('/:kunjunganId/resep', rawatJalanController.simpanResep);
+router.get('/:kunjunganId/resep', rawatJalanController.getResep);
 
 // Tindak Lanjut: Simpan Rujukan
 router.post('/:kunjunganId/rujukan', rawatJalanController.simpanRujukan);
 
+// Tindak Lanjut: Assign ke Ruang Rawat Inap (Opname)
+router.post('/:kunjunganId/rawat-inap', rawatJalanController.assignRawatInap);
+
 // Tindak Lanjut: Pasien Pulang (Tanpa resep/rujukan)
 router.post('/:kunjunganId/pulang', rawatJalanController.pulang);
 
+// Tindak Lanjut: Pasien Meninggal Dunia (UGD / Kedaruratan)
+router.post('/:kunjunganId/meninggal', rawatJalanController.catatMeninggal);
+
+// Tindak Lanjut: Pulangkan Pasien Rawat Inap (Discharge Inap & Finalisasi Kasir)
+router.post('/:kunjunganId/discharge-rawat-inap', rawatJalanController.dischargeRawatInap);
+
+// CPPT Rawat Inap & RME Integrasi
+router.post('/:kunjunganId/cppt', rawatJalanController.simpanCPPT);
+router.get('/:kunjunganId/cppt', rawatJalanController.getRiwayatCPPT);
+router.get('/:kunjunganId/rekam-medis-sebelumnya', rawatJalanController.getRekamMedisSebelumnya);
+
 module.exports = router;
+

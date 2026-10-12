@@ -1,12 +1,24 @@
 const prisma = require('../config/prisma');
+const kasirService = require('./kasir.service');
 
 const imunisasiService = {
     /**
-     * Mengambil daftar master vaksin yang aktif (Untuk Dropdown)
+     * Mengambil daftar master vaksin yang aktif (Untuk Dropdown & Katalog)
      */
-    getAllMasterVaksin: async () => {
+    getAllMasterVaksin: async (faskesId = null) => {
         return await prisma.masterVaksin.findMany({
             where: { statusAktif: true },
+            include: {
+                batchVaksin: {
+                    where: {
+                        statusAktif: true,
+                        stok: { gt: 0 },
+                        tanggalExpired: { gt: new Date() },
+                        ...(faskesId ? { faskesId } : {})
+                    },
+                    orderBy: { tanggalExpired: 'asc' }
+                }
+            },
             orderBy: { namaVaksin: 'asc' },
         });
     },
@@ -14,14 +26,18 @@ const imunisasiService = {
     /**
      * Mengambil daftar batch (stok) berdasarkan ID Vaksin (Untuk Dropdown dinamis)
      */
-    getBatchByVaksin: async (vaksinId) => {
+    getBatchByVaksin: async (vaksinId, faskesId = null) => {
+        const where = {
+            vaksinId: vaksinId,
+            statusAktif: true,
+            stok: { gt: 0 },
+            tanggalExpired: { gt: new Date() }
+        };
+        if (faskesId) {
+            where.faskesId = faskesId;
+        }
         return await prisma.batchVaksin.findMany({
-            where: {
-                vaksinId: vaksinId,
-                statusAktif: true,
-                stok: { gt: 0 }, // Hanya tampilkan yang stoknya masih ada
-                tanggalExpired: { gt: new Date() } // Jangan tampilkan yang sudah kedaluwarsa
-            },
+            where,
             orderBy: { tanggalExpired: 'asc' },
         });
     },
@@ -42,14 +58,15 @@ const imunisasiService = {
             throw error;
         }
 
-        return await prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx) => {
             // 1. Cek ketersediaan Batch Vaksin
             const batch = await tx.batchVaksin.findUnique({
                 where: { id: batchVaksinId },
+                include: { vaksin: true }
             });
 
             if (!batch) throw new Error('Data Batch Vaksin tidak ditemukan.');
-            if (!isRiwayatLuar && batch.stok < 1) throw new Error('Stok vaksin untuk batch ini sudah habis.');
+            if (!isRiwayatLuar && batch.stok < 1) throw new Error(`Stok vaksin ${batch.vaksin?.namaVaksin || ''} untuk batch ini sudah habis.`);
 
             // 2. Buat Riwayat Imunisasi
             const riwayat = await tx.riwayatImunisasi.create({
@@ -59,13 +76,18 @@ const imunisasiService = {
                     batchVaksinId,
                     isRiwayatLuar: isRiwayatLuar || false,
                     tanggalSuntik: tanggalSuntik ? new Date(tanggalSuntik) : new Date(),
-                    dosisKe: parseInt(dosisKe),
+                    dosisKe: parseInt(dosisKe) || 1,
                     dosisJumlah: dosisJumlah ? parseFloat(dosisJumlah) : null,
                     lokasiSuntik,
                     ruteSuntik,
                     petugasId: isRiwayatLuar ? null : petugasId, // Petugas hanya relevan jika disuntik di RS kita
                     catatan,
                 },
+                include: {
+                    batchVaksin: {
+                        include: { vaksin: true }
+                    }
+                }
             });
 
             // 3. Kurangi stok vaksin HANYA JIKA disuntik di Puskesmas kita
@@ -78,6 +100,17 @@ const imunisasiService = {
 
             return riwayat;
         });
+
+        // 4. Update tagihan kasir secara otomatis (memasukkan biaya vaksin ke kasir)
+        if (kunjunganId) {
+            try {
+                await kasirService.generateTagihan(kunjunganId);
+            } catch (errTagihan) {
+                console.error('[Kasir Error] Gagal generate tagihan setelah imunisasi:', errTagihan.message);
+            }
+        }
+
+        return result;
     },
 
     /**

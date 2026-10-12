@@ -9,7 +9,7 @@ const dokterService = {
   // Get all dokters
   getAllDokter: async (user = null, requestedFaskesId = null) => {
     let where = {
-      role: 'DOKTER',
+      role: { in: ['DOKTER', 'DOKTER_UGD'] },
     };
 
     // Multi-tenant faskes filtering:
@@ -73,20 +73,22 @@ const dokterService = {
     const effectiveFaskesId = data.faskesId || (user && !['DINKES_ADMIN', 'SUPERADMIN'].includes(user.role) ? user.faskesId : null);
 
     // 4. Create User and TenagaMedis in one transaction
+    const doctorRole = data.role === 'DOKTER_UGD' ? 'DOKTER_UGD' : 'DOKTER';
+
     return await prisma.user.create({
       data: {
         namaLengkap: satusehatData?.data?.name?.[0]?.text || data.namaLengkap,
         username: data.username,
         password: hashedPassword,
-        role: 'DOKTER',
+        role: doctorRole,
         faskesId: effectiveFaskesId || null,
-        poliklinikId: data.poliklinikId || null,
+        poliklinikId: doctorRole === 'DOKTER_UGD' ? null : (data.poliklinikId || null),
         tenagaMedis: {
           create: {
             nik: data.nik,
             noIHS: satusehatData?.ihsNumber || data.noIHS || null,
             profesi: 'DOKTER_UMUM',
-            spesialis: 'Dokter Umum',
+            spesialis: doctorRole === 'DOKTER_UGD' ? 'Dokter Emergency / UGD' : 'Dokter Umum',
             nomorSip: data.nomorSip || null,
             nomorStr: data.nomorStr || null,
             faskesId: effectiveFaskesId || null,
@@ -114,8 +116,12 @@ const dokterService = {
     const updateData = {
       namaLengkap: data.namaLengkap,
       username: data.username,
-      poliklinikId: data.poliklinikId || null,
+      poliklinikId: data.role === 'DOKTER_UGD' ? null : (data.poliklinikId || null),
     };
+
+    if (data.role && ['DOKTER', 'DOKTER_UGD'].includes(data.role)) {
+      updateData.role = data.role;
+    }
 
     if (data.password && data.password.trim() !== '') {
       updateData.password = await bcrypt.hash(data.password, 10);

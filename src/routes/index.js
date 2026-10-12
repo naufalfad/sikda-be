@@ -27,8 +27,13 @@ const imunisasiRoute = require('./imunisasi.routes');
 const dinkesRoute = require('./dinkes.routes');
 const portalPasienRoute = require('./portalPasien.routes');
 const virtualAssistantRoute = require('./virtualAssistant.routes');
+const ugdRoute = require('./ugd.routes');
 
 const defaultRoutes = [
+  {
+    path: '/ugd',
+    route: ugdRoute,
+  },
   {
     path: '/health',
     route: healthRoute,

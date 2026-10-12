@@ -347,89 +347,121 @@ const createPasien = async (data) => {
       }
     }
 
-    // 0. Generate Nomor Antrean (Opsional jika poliTujuan ada)
+    // 0. Generate Nomor Antrean & Buat Kunjungan (Mendukung Poli Rawat Jalan & UGD Mandiri)
     let kunjungan = null;
-    if (data.poliTujuan) {
-      if (!data.dokterTujuan || data.dokterTujuan === 'Bebas') {
-        const error = new Error('Dokter tujuan wajib dipilih dan tidak boleh kosong.');
+    const isUGD = data.jenisPelayanan === 'UGD' || data.jenisPelayanan === 'IGD' || data.jenisPelayanan === 'Gawat Darurat';
+
+    if (data.poliTujuan || isUGD) {
+      if (!isUGD && (!data.dokterTujuan || data.dokterTujuan === 'Bebas')) {
+        const error = new Error('Dokter tujuan wajib dipilih untuk pelayanan rawat jalan.');
         error.statusCode = 400;
         throw error;
       }
 
-      const poliklinik = await tx.poliklinik.findUnique({
+      const poliklinik = data.poliTujuan ? await tx.poliklinik.findUnique({
         where: { id: data.poliTujuan }
-      });
-      const prefix = poliklinik ? poliklinik.kodePoli.charAt(0).toUpperCase() : 'U';
+      }) : null;
+      const prefix = isUGD ? 'EMG' : (poliklinik ? poliklinik.kodePoli.charAt(0).toUpperCase() : 'U');
     
-    const regDate = new Date(data.tanggalRegistrasi);
-    const startOfDay = new Date(regDate.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(regDate.setHours(23, 59, 59, 999));
+      const regDate = new Date(data.tanggalRegistrasi || new Date());
+      const startOfDay = new Date(regDate.setHours(0, 0, 0, 0));
+      const endOfDay = new Date(regDate.setHours(23, 59, 59, 999));
 
-    const countHariIni = await tx.kunjungan.count({
-      where: {
-        poliklinikId: data.poliTujuan,
-        tanggalRegistrasi: {
-          gte: startOfDay,
-          lte: endOfDay
+      const countHariIni = await tx.kunjungan.count({
+        where: {
+          ...(data.poliTujuan ? { poliklinikId: data.poliTujuan } : { jenisPelayanan: { in: ['UGD', 'IGD', 'Gawat Darurat'] } }),
+          tanggalRegistrasi: {
+            gte: startOfDay,
+            lte: endOfDay
+          }
         }
-      }
-    });
+      });
 
-    const urutan = countHariIni + 1;
-    const generatedNoAntrian = data.noAntrian || `${prefix}-${urutan.toString().padStart(3, '0')}`;
+      const urutan = countHariIni + 1;
+      const generatedNoAntrian = data.noAntrian || `${prefix}-${urutan.toString().padStart(3, '0')}`;
 
-    // 2. Buat Kunjungan
-    kunjungan = await tx.kunjungan.create({
-      data: {
-        faskesId: data.faskesId || null,
-        pasienId: pasien.id,
-        tanggalRegistrasi: new Date(data.tanggalRegistrasi),
-        jamRegistrasi: data.jamRegistrasi,
-        poliklinikId: data.poliTujuan,
-        layananTujuan: data.layananTujuan,
-        jenisPelayanan: data.jenisPelayanan,
-        statusPasien: data.statusPasien,
-        noAntrian: generatedNoAntrian,
-        prioritas: data.prioritas,
-        caraDatang: data.caraDatang,
-        
-        dokterTujuanId: data.dokterTujuan,
-        userPendaftarId: data.userPendaftarId || null,
-        noSep: data.noSep,
-        statusKunjungan: "MENUNGGU",
-        timestamp: data.timestamp || Date.now().toString(),
-        
-        // Relasi Rujukan (Opsional)
-        ...(data.caraDatang === 'Rujukan' ? {
-          rujukan: {
+      // 2. Buat Kunjungan
+      kunjungan = await tx.kunjungan.create({
+        data: {
+          faskesId: data.faskesId || null,
+          pasienId: pasien.id,
+          tanggalRegistrasi: new Date(data.tanggalRegistrasi || new Date()),
+          jamRegistrasi: data.jamRegistrasi || new Date().toTimeString().split(' ')[0].substring(0, 5),
+          poliklinikId: data.poliTujuan || null,
+          layananTujuan: data.layananTujuan || null,
+          jenisPelayanan: isUGD ? 'UGD' : data.jenisPelayanan,
+          statusPasien: data.statusPasien || 'Baru',
+          noAntrian: generatedNoAntrian,
+          prioritas: data.prioritas || (isUGD ? 'Gawat Darurat' : 'Umum'),
+          caraDatang: data.caraDatang || (isUGD ? 'Ambulans' : 'Datang sendiri'),
+          
+          dokterTujuanId: data.dokterTujuan || null,
+          userPendaftarId: data.userPendaftarId || null,
+          noSep: data.noSep,
+          statusKunjungan: isUGD ? "SEDANG_DIPERIKSA" : "MENUNGGU",
+          statusAdministrasi: "LENGKAP",
+          triase: data.triase || (isUGD ? 'KUNING' : null),
+          timestamp: data.timestamp || Date.now().toString(),
+          
+          // Relasi Rujukan (Opsional)
+          ...(data.caraDatang === 'Rujukan' ? {
+            rujukan: {
+              create: {
+                asalRujukan: data.asalRujukan,
+                noRujukan: data.noRujukan,
+                tanggalRujukan: data.tanggalRujukan,
+                fasilitasPerujuk: data.fasilitasPerujuk,
+                diagnosaAwal: data.diagnosaAwal,
+                jenisRujukan: data.jenisRujukan
+              }
+            }
+          } : {}),
+
+          // Persetujuan Medis
+          persetujuan: {
             create: {
-              asalRujukan: data.asalRujukan,
-              noRujukan: data.noRujukan,
-              tanggalRujukan: data.tanggalRujukan,
-              fasilitasPerujuk: data.fasilitasPerujuk,
-              diagnosaAwal: data.diagnosaAwal,
-              jenisRujukan: data.jenisRujukan
+              persetujuanPengobatan: data.persetujuanPengobatan !== undefined ? Boolean(data.persetujuanPengobatan) : true,
+              persetujuanRekamMedis: data.persetujuanRekamMedis !== undefined ? Boolean(data.persetujuanRekamMedis) : true,
+              persetujuanSatusehat: Boolean(data.persetujuanSatusehat),
+              persetujuanReminder: data.persetujuanReminder || false,
+              tandaTangan: tandaTanganUrl || 'PERSETUJUAN_RME_AKTIF'
             }
           }
-        } : {}),
-
-        // Persetujuan Medis
-        persetujuan: {
-          create: {
-            persetujuanPengobatan: data.persetujuanPengobatan !== undefined ? Boolean(data.persetujuanPengobatan) : true,
-            persetujuanRekamMedis: data.persetujuanRekamMedis !== undefined ? Boolean(data.persetujuanRekamMedis) : true,
-            persetujuanSatusehat: Boolean(data.persetujuanSatusehat),
-            persetujuanReminder: data.persetujuanReminder || false,
-            // Simpan URL dari Cloudinary atau persetujuan aktif
-            tandaTangan: tandaTanganUrl || 'PERSETUJUAN_RME_AKTIF'
-          }
+        },
+        include: {
+          rujukan: true,
+          persetujuan: true
         }
-      },
-      include: {
-        rujukan: true,
-        persetujuan: true
+      });
+
+      // Jika UGD dan memilih tempat tidur, kunci bed tersebut
+      if (isUGD && data.tempatTidurId) {
+        await tx.tempatTidur.update({
+          where: { id: data.tempatTidurId },
+          data: {
+            statusBed: 'TERISI',
+            operationalStatus: 'O',
+            kunjunganAktifId: kunjungan.id
+          }
+        });
+
+        // Buat rekam medis & screening awal untuk UGD
+        await tx.rekamMedis.create({
+          data: {
+            kunjunganId: kunjungan.id,
+            keluhanUtama: data.keluhanUtama || 'Pendaftaran Pasien UGD',
+            statusPemeriksaan: 'DIPERIKSA'
+          }
+        });
+        await tx.screening.create({
+          data: {
+            kunjunganId: kunjungan.id,
+            petugasId: data.userPendaftarId || null,
+            keluhanUtama: data.keluhanUtama || 'Pendaftaran Pasien UGD',
+            kesadaran: 'Compos Mentis'
+          }
+        });
       }
-    });
 
     // 3. Create Encounter di SATUSEHAT
     const effectiveIhs = newIhs || pasien.noIHS;
@@ -576,6 +608,20 @@ const getAllPasien = async (user, requestedFaskesId) => {
       sosial: true,
       penjamin: true,
       dataBayi: true,
+      kunjungans: {
+        select: {
+          id: true,
+          noAntrian: true,
+          jenisPelayanan: true,
+          statusAdministrasi: true,
+          isAnonim: true,
+          namaAnonim: true,
+          statusKunjungan: true,
+          triase: true
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1
+      }
     },
     orderBy: {
       createdAt: 'desc'

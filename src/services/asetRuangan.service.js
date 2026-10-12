@@ -170,7 +170,40 @@ const getBeds = async (query = {}, user) => {
       kunjunganAktif: {
         include: {
           pasien: {
-            select: { id: true, noRM: true, namaLengkap: true, jenisKelamin: true }
+            select: { id: true, noRM: true, namaLengkap: true, jenisKelamin: true, tanggalLahir: true }
+          },
+          poliklinik: true,
+          rekamMedis: {
+            include: {
+              dokter: {
+                select: { id: true, namaLengkap: true }
+              }
+            }
+          },
+          screening: true,
+          diagnosis: {
+            include: {
+              icd10: true
+            }
+          },
+          catatanPerkembangans: {
+            include: {
+              petugas: {
+                select: { id: true, namaLengkap: true, role: true }
+              }
+            },
+            orderBy: { createdAt: 'desc' }
+          },
+          resep: {
+            include: {
+              details: {
+                include: { obat: true }
+              },
+              dokter: {
+                select: { id: true, namaLengkap: true, username: true }
+              }
+            },
+            orderBy: { tanggalResep: 'desc' }
           }
         }
       }

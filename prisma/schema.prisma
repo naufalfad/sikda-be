@@ -15,7 +15,7 @@ model User {
   username    String   @unique
   password    String
   namaLengkap String?
-  role        String // 'ADMINISTRASI', 'PERAWAT', 'DOKTER', 'ADMIN', 'DINKES_ADMIN', 'DINKES_MONITORING'
+  role        String // 'ADMINISTRASI', 'PERAWAT', 'DOKTER', 'DOKTER_UGD', 'ADMIN', 'DINKES_ADMIN', 'DINKES_MONITORING', 'APOTEKER', 'LABORATORIUM', 'KASIR', 'RADIOLOGI', 'PETUGAS_UKM'
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -61,6 +61,9 @@ model User {
 
   // Relasi Booking Antrean Online
   bookingsOnline    BookingAntreanOnline[] @relation("DokterBookingOnline")
+
+  // Relasi CPPT Rawat Inap
+  catatanPerkembangans CatatanPerkembangan[] @relation("PetugasCatatanPerkembangan")
 }
 
 // 1. Data Induk Pasien
@@ -118,6 +121,9 @@ model Pasien {
   sampelLabs          SampelLaboratorium[]
   laporanDiagnostik   LaporanDiagnostik[]
   resumeMedis         ResumeMedis[]
+
+  // Relasi CPPT Rawat Inap
+  catatanPerkembangans CatatanPerkembangan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -218,15 +224,22 @@ model Kunjungan {
   jamRegistrasi     String
   timestamp         String?
 
-  poliklinikId   String
-  poliklinik     Poliklinik @relation("PoliKunjungan", fields: [poliklinikId], references: [id])
+  poliklinikId   String?
+  poliklinik     Poliklinik? @relation("PoliKunjungan", fields: [poliklinikId], references: [id])
   layananTujuan  String? // Layanan spesifik yang dipilih (opsional)
-  jenisPelayanan String // Rawat Jalan, Rawat Inap, IGD
+  jenisPelayanan String // Rawat Jalan, Rawat Inap, UGD
   statusPasien   String // Baru, Lama
 
   noAntrian  String
   prioritas  String // Umum, Lansia, Disabilitas, dll
   caraDatang String // Datang sendiri, Ambulans, Rujukan
+
+  // Alur UGD & Administrasi
+  triase             String? // MERAH, KUNING, HIJAU, HITAM
+  statusAdministrasi String?   @default("LENGKAP") // PENDING, LENGKAP
+  isAnonim           Boolean   @default(false)
+  namaAnonim         String?
+  kondisiTiba        String?
 
   noSep                 String?
   satusehat_sync_status String  @default("PENDING")
@@ -243,6 +256,7 @@ model Kunjungan {
   statusPulang            String? // PULANG_SEMBUH, DIRUJUK_RS, RAWAT_INAP, KONTROL_ULANG (FHIR Discharge Disposition)
   waktuPemeriksaanMulai   DateTime?
   waktuPemeriksaanSelesai DateTime?
+  waktuMasukRawatInap     DateTime?
   waktuDischarge          DateTime?
   caraKeluar              String? // "PERSATUAN_DOKTER", "RUJUK", "PULANG_PAKSA", "MENINGGAL"
   kondisiDischarge        String? // "SEMBUH", "MEMBAIK", "BELUM_SEMBUH", "MENINGGAL"
@@ -279,6 +293,9 @@ model Kunjungan {
 
   // Relasi Bed Management Rawat Inap/IGD
   tempatTidurs TempatTidur[] @relation("KunjunganTempatTidur")
+
+  // Relasi CPPT Rawat Inap
+  catatanPerkembangans CatatanPerkembangan[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1339,6 +1356,37 @@ model ResumeMedis {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+// 5. Catatan Perkembangan Pasien Terintegrasi (CPPT Rawat Inap)
+model CatatanPerkembangan {
+  id             String    @id @default(cuid())
+  kunjunganId    String
+  kunjungan      Kunjungan @relation(fields: [kunjunganId], references: [id], onDelete: Cascade)
+  pasienId       String
+  pasien         Pasien    @relation(fields: [pasienId], references: [id], onDelete: Cascade)
+  petugasId      String
+  petugas        User      @relation("PetugasCatatanPerkembangan", fields: [petugasId], references: [id])
+  profesi        String    @default("DOKTER") // 'DOKTER', 'PERAWAT'
+  tanggalCatatan DateTime  @default(now())
+
+  // S - Subjektif
+  subjektif      String?   @db.Text
+
+  // O - Objektif
+  objektif       String?   @db.Text
+  tandaVital     Json?     // { tdSistolik, tdDiastolik, nadi, suhu, rr, spo2, gcs, kesadaran }
+
+  // A - Asesmen
+  asesmen        String?   @db.Text
+
+  // P - Plan & Instruksi
+  plan           String?   @db.Text
+  instruksiMedis String?   @db.Text
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
 
 // ==========================================
 // MODUL PENGELOLAAN RUANGAN & ASET PUSKESMAS (ASPAK & SATUSEHAT)

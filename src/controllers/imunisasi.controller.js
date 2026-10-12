@@ -14,7 +14,8 @@ const imunisasiController = {
      */
     getMasterVaksin: async (req, res, next) => {
         try {
-            const data = await imunisasiService.getAllMasterVaksin();
+            const faskesId = req.query.faskesId || req.user?.faskesId;
+            const data = await imunisasiService.getAllMasterVaksin(faskesId);
             res.status(200).json({ success: true, data });
         } catch (error) {
             next(error);
@@ -27,7 +28,8 @@ const imunisasiController = {
     getBatchVaksin: async (req, res, next) => {
         try {
             const { vaksinId } = req.params;
-            const data = await imunisasiService.getBatchByVaksin(vaksinId);
+            const faskesId = req.query.faskesId || req.user?.faskesId;
+            const data = await imunisasiService.getBatchByVaksin(vaksinId, faskesId);
             res.status(200).json({ success: true, data });
         } catch (error) {
             next(error);

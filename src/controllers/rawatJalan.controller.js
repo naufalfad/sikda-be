@@ -160,6 +160,16 @@ const simpanResep = async (req, res, next) => {
   }
 };
 
+const getResep = async (req, res, next) => {
+  try {
+    const { kunjunganId } = req.params;
+    const data = await rawatJalanService.getResepByKunjungan(kunjunganId);
+    res.status(200).json({ status: 'success', data });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const simpanRujukan = async (req, res, next) => {
   try {
     const { kunjunganId } = req.params;
@@ -203,6 +213,92 @@ const pulang = async (req, res, next) => {
   }
 };
 
+const assignRawatInap = async (req, res, next) => {
+  try {
+    const { kunjunganId } = req.params;
+    const dokterId = req.user.id;
+    const data = await rawatJalanService.assignRawatInap(kunjunganId, dokterId, req.body);
+    res.status(200).json({
+      success: true,
+      message: 'Pasien berhasil dialihkan ke Ruang Rawat Inap',
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const catatMeninggal = async (req, res, next) => {
+  try {
+    const { kunjunganId } = req.params;
+    const dokterId = req.user.id;
+    const { catatan } = req.body;
+    const data = await rawatJalanService.catatMeninggal(kunjunganId, dokterId, catatan);
+    res.status(200).json({
+      success: true,
+      message: 'Status pasien dicatat meninggal dunia',
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const dischargeRawatInap = async (req, res, next) => {
+  try {
+    const { kunjunganId } = req.params;
+    const data = await rawatJalanService.dischargeRawatInap(kunjunganId, req.body);
+    res.status(200).json({
+      success: true,
+      message: 'Pasien rawat inap berhasil dipulangkan dan tagihan difinalisasi ke Kasir',
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const simpanCPPT = async (req, res, next) => {
+  try {
+    const { kunjunganId } = req.params;
+    const user = req.user;
+    const result = await rawatJalanService.simpanCPPT(kunjunganId, user, req.body);
+    res.status(200).json({
+      success: true,
+      message: 'Catatan perkembangan (CPPT) berhasil disimpan dan terintegrasi ke Rekam Medis (RME)',
+      data: result,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getRiwayatCPPT = async (req, res, next) => {
+  try {
+    const { kunjunganId } = req.params;
+    const data = await rawatJalanService.getRiwayatCPPT(kunjunganId);
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getRekamMedisSebelumnya = async (req, res, next) => {
+  try {
+    const { kunjunganId } = req.params;
+    const data = await rawatJalanService.getRekamMedisSebelumnya(kunjunganId);
+    res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAntrianDokter,
   mulaiPemeriksaan,
@@ -215,10 +311,18 @@ module.exports = {
   getDiagnosa,
   getTindakan,
   simpanResep,
+  getResep,
   simpanRujukan,
+  assignRawatInap,
+  dischargeRawatInap,
   pulang,
+  catatMeninggal,
   getRiwayatDokter,
   getRiwayatPasienByRM,
   simpanAlergi,
   getAlergi,
+  simpanCPPT,
+  getRiwayatCPPT,
+  getRekamMedisSebelumnya,
 };
+

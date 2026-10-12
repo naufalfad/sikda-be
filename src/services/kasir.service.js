@@ -22,7 +22,8 @@ const getAntrianKasir = async (user) => {
           statusTagihan: 'BELUM_LUNAS'
         },
         statusKunjungan: {
-          notIn: ['BATAL', 'SELESAI']
+          // Pasien RAWAT_INAP ditahan dan belum masuk loket kasir sampai dinyatakan pulang/discharge
+          notIn: ['BATAL', 'SELESAI', 'RAWAT_INAP']
         }
       }
     ]
@@ -66,6 +67,16 @@ const generateTagihan = async (kunjunganId) => {
       },
       resep: {
         include: { details: { include: { obat: true } } },
+      },
+      riwayatImunisasi: {
+        include: {
+          batchVaksin: {
+            include: { vaksin: true }
+          }
+        }
+      },
+      tempatTidurs: {
+        include: { ruangan: true }
       },
       tagihan: true,
     },
@@ -152,6 +163,70 @@ const generateTagihan = async (kunjunganId) => {
         }
       }
     }
+  }
+
+  // 4. Vaksinasi / Imunisasi (Layanan Vaksin Cold-Chain di Faskes)
+  if (kunjungan.riwayatImunisasi && kunjungan.riwayatImunisasi.length > 0) {
+    const imunisasiLokal = kunjungan.riwayatImunisasi.filter(i => !i.isRiwayatLuar);
+    for (const im of imunisasiLokal) {
+      const tarifVaksin = 25000; // Tarif administrasi & layanan imunisasi puskesmas
+      const namaVaksin = im.batchVaksin?.vaksin?.namaVaksin || 'Vaksinasi / Imunisasi';
+      details.push({
+        namaItem: `Vaksin: ${namaVaksin} (Dosis ${im.dosisKe})`,
+        kategori: 'Vaksin',
+        jumlah: 1,
+        hargaSatuan: tarifVaksin,
+        subTotal: tarifVaksin,
+      });
+      totalBiaya += tarifVaksin;
+    }
+  }
+
+  // 5. Akomodasi & Tempat Tidur Rawat Inap (Puskesmas FKTP: Tarif Flat Rate Seragam Tanpa Kelas)
+  const isRawatInap = Boolean(
+    kunjungan.waktuMasukRawatInap ||
+    kunjungan.statusPulang === 'RAWAT_INAP' ||
+    kunjungan.statusKunjungan === 'RAWAT_INAP' ||
+    kunjungan.jenisPelayanan === 'Rawat Inap' ||
+    kunjungan.jenisPelayanan === 'RAWAT_INAP' ||
+    (kunjungan.tempatTidurs && kunjungan.tempatTidurs.some(b => b.ruangan?.kategoriRuangan === 'RAWAT_INAP'))
+  );
+
+  if (isRawatInap) {
+    const waktuMasuk = kunjungan.waktuMasukRawatInap 
+      ? new Date(kunjungan.waktuMasukRawatInap) 
+      : new Date(kunjungan.tanggalRegistrasi);
+    const waktuKeluar = kunjungan.waktuDischarge 
+      ? new Date(kunjungan.waktuDischarge) 
+      : new Date();
+
+    const start = new Date(waktuMasuk);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(waktuKeluar);
+    end.setHours(0, 0, 0, 0);
+    const diffCalDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+    // Minimal 1 hari menginap
+    const lamaHari = Math.max(1, diffCalDays <= 0 ? 1 : diffCalDays);
+
+    // Standar Flat Rate Biaya Tempat Tidur Rawat Inap Puskesmas (FKTP)
+    const TARIF_BED_PUSKESMAS = 50000; // Rp 50.000 / hari
+
+    const bedInap = (kunjungan.tempatTidurs && kunjungan.tempatTidurs.length > 0)
+      ? (kunjungan.tempatTidurs.find(b => b.ruangan?.kategoriRuangan === 'RAWAT_INAP') || kunjungan.tempatTidurs[0])
+      : null;
+
+    const namaRuangan = bedInap?.ruangan?.namaRuangan || 'Ruang Rawat Inap Puskesmas';
+    const nomorBed = bedInap?.nomorBed || 'Bed Inap';
+    const subTotalBed = lamaHari * TARIF_BED_PUSKESMAS;
+
+    details.push({
+      namaItem: `Akomodasi Tempat Tidur (${namaRuangan} - ${nomorBed}) [${lamaHari} Hari]`,
+      kategori: 'Akomodasi',
+      jumlah: lamaHari,
+      hargaSatuan: TARIF_BED_PUSKESMAS,
+      subTotal: subTotalBed,
+    });
+    totalBiaya += subTotalBed;
   }
 
   // Buat Tagihan dengan Pricing Snapshot

@@ -136,9 +136,9 @@ const getAntrianDokter = async (user) => {
   applyFaskesScope(whereClause, user);
 
   // Filter isolasi data Poliklinik & Antrean: 
-  // - Dokter: Hanya antrean khusus dirinya ATAU antrean poli yang belum diarahkan ke dokter spesifik (pool umum poli).
+  // - Dokter / Dokter UGD: Antrean khusus dirinya ATAU antrean poli yang belum diarahkan ke dokter spesifik (pool umum poli).
   // - Perawat: Semua antrean dalam poliklinik tempat bertugas untuk screening & TTV.
-  if (user && user.role === 'DOKTER') {
+  if (user && (user.role === 'DOKTER' || user.role === 'DOKTER_UGD')) {
     whereClause.OR = [
       { dokterTujuanId: user.id },
       {
@@ -157,6 +157,11 @@ const getAntrianDokter = async (user) => {
       poliklinik: true,
       screening: true,
       rekamMedis: true,
+      tempatTidurs: {
+        include: {
+          ruangan: true
+        }
+      },
       dokterTujuan: {
         select: { id: true, namaLengkap: true, username: true },
       },
@@ -181,13 +186,15 @@ const getAntrianDokter = async (user) => {
   kunjungans = kunjungans.map(kunjungan => {
     let score = 1; // Default: Umum (Hijau)
 
-    const triage = kunjungan.screening?.kategoriTriage?.toLowerCase() || '';
+    const triage = (kunjungan.triase || kunjungan.screening?.kategoriTriage || '').toLowerCase();
     if (triage === 'merah') {
-      score = 4;
+      score = 5; // Prioritas Gawat Darurat Tertinggi
     } else if (triage === 'kuning') {
-      score = 3;
+      score = 4; // Prioritas Darurat
+    } else if (triage === 'hijau') {
+      score = 2; // Tidak Gawat Tidak Darurat
     } else if (triage === 'hitam') {
-      score = 0; // Ditangani khusus, biasanya tidak di poli
+      score = 0; // Death on Arrival
     } else {
       // Jika Hijau / Belum Triage, cek prioritas demografi
       const prioritas = kunjungan.prioritas?.toLowerCase() || '';
@@ -198,6 +205,9 @@ const getAntrianDokter = async (user) => {
 
     return { ...kunjungan, _priorityScore: score };
   });
+
+  // Urutkan prioritas tertinggi di atas, lalu urutkan berdasarkan waktu registrasi
+  kunjungans.sort((a, b) => b._priorityScore - a._priorityScore);
 
   // Sort: Skor tertinggi di atas. Jika skor sama, urutkan berdasarkan waktu kedatangan.
   kunjungans.sort((a, b) => {
@@ -286,42 +296,44 @@ const getRiwayatPasienByRM = async (noRM, user) => {
     throw err;
   }
 
-  // VALIDASI HAK AKSES KHUSUS DOKTER:
-  if (user && user.role === 'DOKTER') {
+  // VALIDASI HAK AKSES KHUSUS DOKTER (Active Therapeutic Relationship):
+  if (user && ['DOKTER', 'DOKTER_UGD'].includes(user.role)) {
     const faskesFilter = user.faskesId ? { faskesId: user.faskesId } : {};
 
-    // 1. Cek riwayat penanganan masa lalu oleh dokter ini
+    // 1. Cek riwayat penanganan masa lalu oleh dokter ini (Poli, Rawat Inap, UGD, atau CPPT)
     const pernahMenangani = await prisma.kunjungan.findFirst({
       where: {
         pasienId: pasien.id,
         ...faskesFilter,
-        statusKunjungan: {
-          in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR']
-        },
         OR: [
           { dokterTujuanId: user.id },
-          { rekamMedis: { dokterId: user.id } }
+          { rekamMedis: { dokterId: user.id } },
+          { catatanPerkembangans: { some: { petugasId: user.id } } }
         ]
       }
     });
 
-    // 2. Cek penugasan pelayanan aktif (antrean aktif di dokter ini atau di pool umum poli dokter ini)
+    // 2. Cek penugasan pelayanan aktif (antrean aktif di dokter ini, poli dokter ini, atau pasien aktif rawat inap/UGD)
     const antrianAktif = await prisma.kunjungan.findFirst({
       where: {
         pasienId: pasien.id,
         ...faskesFilter,
         statusKunjungan: {
-          in: ['MENUNGGU_DOKTER', 'DIPERIKSA', 'MENUNGGU_LAB', 'MENUNGGU_RADIOLOGI', 'ANTRI_POLI']
+          in: ['MENUNGGU_DOKTER', 'DIPERIKSA', 'MENUNGGU_LAB', 'MENUNGGU_RADIOLOGI', 'ANTRI_POLI', 'RAWAT_INAP']
         },
         OR: [
           { dokterTujuanId: user.id },
-          ...(user.poliklinikId ? [{ poliklinikId: user.poliklinikId, dokterTujuanId: null }] : [])
+          ...(user.poliklinikId ? [{ poliklinikId: user.poliklinikId, dokterTujuanId: null }] : []),
+          // Pasien rawat inap aktif di faskes yang sama dapat divisit oleh dokter faskes
+          { statusKunjungan: 'RAWAT_INAP' },
+          // Pasien gawat darurat UGD di faskes yang sama
+          { jenisPelayanan: 'UGD' }
         ]
       }
     });
 
     if (!pernahMenangani && !antrianAktif) {
-      const err = new Error('Akses Ditolak: Anda tidak memiliki wewenang klinis aktif untuk mengakses berkas rekam medis pasien ini. Rekam medis hanya dapat dibuka jika Anda pernah merawat pasien ini atau pasien sedang aktif ditugaskan ke antrean pemeriksaan Anda.');
+      const err = new Error('Akses Ditolak: Anda tidak memiliki wewenang klinis aktif untuk mengakses berkas rekam medis pasien ini. Rekam medis hanya dapat dibuka jika Anda pernah merawat pasien ini, pasien sedang aktif ditugaskan ke antrean Anda, atau pasien sedang dalam perawatan rawat inap / UGD faskes ini.');
       err.statusCode = 403;
       throw err;
     }
@@ -330,7 +342,7 @@ const getRiwayatPasienByRM = async (noRM, user) => {
   // Tentukan filter kunjungan pasien (terisolasi per Faskes):
   const kunjungansWhere = {
     statusKunjungan: {
-      in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR'],
+      in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR', 'RAWAT_INAP', 'DIPERIKSA', 'MENUNGGU_DOKTER'],
     },
   };
 
@@ -376,6 +388,12 @@ const getRiwayatPasienByRM = async (noRM, user) => {
           },
           orderRadiologi: {
             include: { details: true }
+          },
+          catatanPerkembangans: {
+            include: {
+              petugas: { select: { id: true, namaLengkap: true, role: true } }
+            },
+            orderBy: { createdAt: 'desc' }
           }
         },
       },
@@ -843,13 +861,15 @@ const sendBundleForKunjungan = async (kunjunganId) => {
     console.log(`[SATUSEHAT Sync] ✅ Berhasil sync bundle untuk kunjungan ${kunjunganId}`);
   } catch (syncError) {
     console.error(`[SATUSEHAT Bundle Error] Gagal mengirim Bundle:`, syncError.message || syncError);
-    await prisma.kunjungan.update({
-      where: { id: kunjunganId },
-      data: {
-        satusehat_sync_status: 'FAILED',
-        satusehat_last_error: syncError.message || String(syncError)
-      }
-    });
+    try {
+      await prisma.kunjungan.update({
+        where: { id: kunjunganId },
+        data: {
+          satusehat_sync_status: 'FAILED',
+          satusehat_last_error: syncError.message || String(syncError)
+        }
+      });
+    } catch (_) {}
   }
 };
 
@@ -895,23 +915,68 @@ const simpanResep = async (kunjunganId, user, resepArr) => {
       },
     });
 
-    // Buat detail resep dengan informasi batch yang dialokasikan/dipilih
-    const details = resepArr.map((r) => ({
-      resepId: resep.id,
-      obatId: r.obatId,
-      jumlah: r.qty,
-      aturanPakai: r.signa,
-      catatan: r.catatan || null,
-      noBatch: r.noBatch || null,
-    }));
+    // Buat detail resep dengan validasi referensi foreign key MasterObat
+    const details = [];
+    for (const r of (resepArr || [])) {
+      if (!r || !r.obatId) continue;
 
-    await tx.resepDetail.createMany({ data: details });
+      let validObatId = r.obatId;
+      let obat = await tx.masterObat.findUnique({ where: { id: validObatId } });
+
+      if (!obat) {
+        // Fallback: periksa berdasarkan kodeObat atau kfa_code atau nama obat
+        const fallbackObat = await tx.masterObat.findFirst({
+          where: {
+            OR: [
+              { kodeObat: validObatId },
+              { kfa_code: validObatId },
+              r.namaObat ? { namaObat: { equals: r.namaObat, mode: 'insensitive' } } : undefined
+            ].filter(Boolean)
+          }
+        });
+
+        if (fallbackObat) {
+          validObatId = fallbackObat.id;
+        } else {
+          // Cek apakah item merupakan vaksin agar diberikan pesan edukatif
+          const isVaksin = await tx.masterVaksin.findUnique({ where: { id: validObatId } });
+          if (isVaksin) {
+            const err = new Error(`Item "${isVaksin.namaVaksin}" adalah sediaan Vaksin Cold-Chain. Vaksin tidak dilayani melalui e-Resep Farmasi, melainkan dicatat langsung melalui modul Imunisasi faskes.`);
+            err.statusCode = 400;
+            throw err;
+          }
+
+          console.warn(`[simpanResep] Peringatan: Obat dengan ID "${validObatId}" tidak ditemukan di Master Obat. Item dilewati.`);
+          continue;
+        }
+      }
+
+      details.push({
+        resepId: resep.id,
+        obatId: validObatId,
+        jumlah: parseInt(r.qty || r.jumlah) || 1,
+        aturanPakai: r.signa || r.aturanPakai || 'Sesuai petunjuk dokter',
+        catatan: r.catatan || null,
+        noBatch: r.noBatch || null,
+      });
+    }
+
+    if (details.length > 0) {
+      await tx.resepDetail.createMany({ data: details });
+    } else if (Array.isArray(resepArr) && resepArr.length > 0) {
+      const err = new Error('Semua item obat yang dipilih tidak ditemukan dalam katalog master data.');
+      err.statusCode = 400;
+      throw err;
+    }
 
     // Status kunjungan ke MENUNGGU_FARMASI (Bundle dikirim saat penyerahan obat di Farmasi)
-    await tx.kunjungan.update({
-      where: { id: kunjunganId },
-      data: { statusKunjungan: 'MENUNGGU_FARMASI' },
-    });
+    // KECUALI jika pasien sedang RAWAT_INAP, pertahankan statusKunjungan tetap RAWAT_INAP
+    if (kunjungan.statusKunjungan !== 'RAWAT_INAP') {
+      await tx.kunjungan.update({
+        where: { id: kunjunganId },
+        data: { statusKunjungan: 'MENUNGGU_FARMASI' },
+      });
+    }
 
     return { resep, details };
   });
@@ -964,8 +1029,30 @@ const simpanRujukan = async (kunjunganId, dokterId, rujukanData) => {
 
     await tx.kunjungan.update({
       where: { id: kunjunganId },
-      data: { statusKunjungan: 'MENUNGGU_KASIR', waktuDischarge: new Date() },
+      data: {
+        statusKunjungan: 'MENUNGGU_KASIR',
+        statusPulang: 'DIRUJUK_RS',
+        caraKeluar: 'RUJUK',
+        waktuDischarge: new Date(),
+      },
     });
+
+    // Otomatis bebaskan Bed UGD / Rawat Inap jika ada
+    await tx.tempatTidur.updateMany({
+      where: { kunjunganAktifId: kunjunganId },
+      data: {
+        statusBed: 'TERSEDIA',
+        operationalStatus: 'U',
+        kunjunganAktifId: null,
+      },
+    });
+
+    if (kunjungan.rekamMedis && kunjungan.rekamMedis.statusPemeriksaan === 'DRAFT') {
+      await tx.rekamMedis.update({
+        where: { id: kunjungan.rekamMedis.id },
+        data: { statusPemeriksaan: 'SELESAI' },
+      });
+    }
 
     return res;
   });
@@ -984,12 +1071,139 @@ const simpanRujukan = async (kunjunganId, dokterId, rujukanData) => {
 };
 
 /**
+ * Assign Pasien ke Ruang Rawat Inap (Bed Assignment dari Rawat Jalan / UGD)
+ */
+const assignRawatInap = async (kunjunganId, dokterId, dataRawatInap) => {
+  const { tempatTidurId, alasanRawatInap, instruksiMedis } = dataRawatInap;
+
+  const kunjungan = await prisma.kunjungan.findUnique({
+    where: { id: kunjunganId },
+    include: {
+      pasien: true,
+      rekamMedis: true,
+    },
+  });
+  if (!kunjungan) throw new Error('Kunjungan tidak ditemukan');
+
+  const bed = await prisma.tempatTidur.findUnique({
+    where: { id: tempatTidurId },
+    include: { ruangan: true },
+  });
+  if (!bed) throw new Error('Tempat tidur tidak ditemukan');
+
+  if (bed.statusBed === 'TERISI' && bed.kunjunganAktifId && bed.kunjunganAktifId !== kunjunganId) {
+    throw new Error(`Tempat tidur ${bed.nomorBed} di ${bed.ruangan.namaRuangan} sudah terisi.`);
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    // 0. Bebaskan Bed UGD lama jika pasien berasal dari UGD
+    await tx.tempatTidur.updateMany({
+      where: {
+        kunjunganAktifId: kunjunganId,
+        id: { not: tempatTidurId },
+      },
+      data: {
+        statusBed: 'TERSEDIA',
+        operationalStatus: 'U',
+        kunjunganAktifId: null,
+      },
+    });
+
+    // 1. Assign Bed Rawat Inap Baru
+    const updatedBed = await tx.tempatTidur.update({
+      where: { id: tempatTidurId },
+      data: {
+        statusBed: 'TERISI',
+        operationalStatus: 'O',
+        kunjunganAktifId: kunjunganId,
+      },
+      include: { ruangan: true },
+    });
+
+    // 2. Update status Kunjungan ke RAWAT_INAP
+    const updatedKunjungan = await tx.kunjungan.update({
+      where: { id: kunjunganId },
+      data: {
+        statusKunjungan: 'RAWAT_INAP',
+        statusPulang: 'RAWAT_INAP',
+        caraKeluar: 'RAWAT_INAP',
+        kondisiDischarge: 'BELUM_SEMBUH',
+        waktuMasukRawatInap: new Date(),
+        waktuDischarge: null,
+      },
+    });
+
+    // 3. Selesaikan rekam medis rawat jalan & catat instruksi inap
+    if (kunjungan.rekamMedis) {
+      const existingInstruksi = kunjungan.rekamMedis.instruksiMedis || '';
+      const notes = [
+        existingInstruksi,
+        alasanRawatInap ? `[Indikasi Rawat Inap] ${alasanRawatInap}` : '',
+        instruksiMedis ? `[Instruksi Bangsal] ${instruksiMedis}` : '',
+        `[Bed Assignment] ${bed.ruangan.namaRuangan} - Bed ${bed.nomorBed}`,
+      ].filter(Boolean).join('\n');
+
+      await tx.rekamMedis.update({
+        where: { id: kunjungan.rekamMedis.id },
+        data: {
+          statusPemeriksaan: 'SELESAI',
+          instruksiMedis: notes,
+        },
+      });
+    }
+
+    return { bed: updatedBed, kunjungan: updatedKunjungan };
+  });
+
+  // Generate tagihan kasir
+  try {
+    await kasirService.generateTagihan(kunjunganId);
+  } catch (errTagihan) {
+    console.error(`[Kasir Error] Gagal generate tagihan:`, errTagihan.message);
+  }
+
+  // Kirim Bundle Transaction SATUSEHAT
+  try {
+    await sendBundleForKunjungan(kunjunganId);
+  } catch (errSS) {
+    console.error(`[SATUSEHAT Error] Gagal sync bundle:`, errSS.message);
+  }
+
+  return result;
+};
+
+/**
  * Pulang tanpa resep/rujukan
  */
 const pulang = async (kunjunganId) => {
-  const updated = await prisma.kunjungan.update({
-    where: { id: kunjunganId },
-    data: { statusKunjungan: 'MENUNGGU_KASIR', waktuDischarge: new Date() },
+  const existingResep = await prisma.resep.findFirst({
+    where: { kunjunganId, status: 'MENUNGGU_FARMASI' },
+  });
+  const targetStatus = existingResep ? 'MENUNGGU_FARMASI' : 'MENUNGGU_KASIR';
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Bebaskan Bed UGD / Bed Aktif jika ada
+    await tx.tempatTidur.updateMany({
+      where: { kunjunganAktifId: kunjunganId },
+      data: {
+        statusBed: 'TERSEDIA',
+        operationalStatus: 'U',
+        kunjunganAktifId: null,
+      },
+    });
+
+    const updated = await tx.kunjungan.update({
+      where: { id: kunjunganId },
+      data: {
+        statusKunjungan: targetStatus,
+        statusPulang: 'PULANG_SEMBUH',
+        caraKeluar: 'PERSATUAN_DOKTER',
+        kondisiDischarge: 'SEMBUH',
+        waktuDischarge: new Date(),
+      },
+    });
+
+    return updated;
   });
 
   // Generate tagihan kasir secara otomatis
@@ -1002,7 +1216,407 @@ const pulang = async (kunjunganId) => {
   // Kirim Bundle SATUSEHAT langsung untuk pasien Pulang
   sendBundleForKunjungan(kunjunganId);
 
-  return updated;
+  return result;
+};
+
+/**
+ * Pasien Meninggal Dunia (Discharge UGD / Rawat Jalan)
+ */
+const catatMeninggal = async (kunjunganId, dokterId, catatan) => {
+  const kunjungan = await prisma.kunjungan.findUnique({
+    where: { id: kunjunganId },
+    include: { rekamMedis: true }
+  });
+  if (!kunjungan) throw new Error('Kunjungan tidak ditemukan');
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Bebaskan Bed UGD jika ada
+    await tx.tempatTidur.updateMany({
+      where: { kunjunganAktifId: kunjunganId },
+      data: {
+        statusBed: 'TERSEDIA',
+        operationalStatus: 'U',
+        kunjunganAktifId: null,
+      },
+    });
+
+    const updatedKunjungan = await tx.kunjungan.update({
+      where: { id: kunjunganId },
+      data: {
+        statusKunjungan: 'SELESAI',
+        statusPulang: 'MENINGGAL',
+        caraKeluar: 'MENINGGAL',
+        kondisiDischarge: 'MENINGGAL',
+        waktuDischarge: new Date()
+      }
+    });
+
+    if (kunjungan.rekamMedis) {
+      await tx.rekamMedis.update({
+        where: { id: kunjungan.rekamMedis.id },
+        data: {
+          statusPemeriksaan: 'SELESAI',
+          instruksiMedis: catatan ? `[Pasien Meninggal] ${catatan}` : '[Pasien Meninggal Dunia di UGD]'
+        }
+      });
+    }
+
+    return updatedKunjungan;
+  });
+
+  return result;
+};
+
+/**
+ * Pulangkan Pasien Rawat Inap (Discharge Rawat Inap)
+ * Menghitung hari rawat inap, membebaskan tempat tidur, dan menghasilkan tagihan akomodasi kasir
+ */
+const dischargeRawatInap = async (kunjunganId, dataDischarge = {}) => {
+  const kunjungan = await prisma.kunjungan.findUnique({
+    where: { id: kunjunganId },
+    include: {
+      pasien: true,
+      rekamMedis: true,
+      tempatTidurs: {
+        include: { ruangan: true },
+      },
+    },
+  });
+  if (!kunjungan) throw new Error('Kunjungan tidak ditemukan');
+
+  const existingResep = await prisma.resep.findFirst({
+    where: { kunjunganId, status: 'MENUNGGU_FARMASI' },
+  });
+  const targetStatus = existingResep ? 'MENUNGGU_FARMASI' : 'MENUNGGU_KASIR';
+
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. Bebaskan seluruh Bed Rawat Inap yang ditempati pasien
+    await tx.tempatTidur.updateMany({
+      where: { kunjunganAktifId: kunjunganId },
+      data: {
+        statusBed: 'TERSEDIA',
+        operationalStatus: 'U',
+        kunjunganAktifId: null,
+      },
+    });
+
+    // 2. Update status Kunjungan ke Discharge (Siap Bayar di Kasir)
+    const statusPulangFinal = dataDischarge.caraKeluar === 'RUJUK'
+      ? 'DIRUJUK_RS'
+      : (dataDischarge.caraKeluar === 'MENINGGAL' ? 'MENINGGAL' : 'PULANG_SEMBUH');
+
+    const updatedKunjungan = await tx.kunjungan.update({
+      where: { id: kunjunganId },
+      data: {
+        statusKunjungan: targetStatus,
+        statusPulang: statusPulangFinal,
+        caraKeluar: dataDischarge.caraKeluar || 'PERSATUAN_DOKTER',
+        kondisiDischarge: dataDischarge.kondisiDischarge || (dataDischarge.caraKeluar === 'RUJUK' ? 'BELUM_SEMBUH' : 'SEMBUH'),
+        waktuDischarge: new Date(),
+      },
+    });
+
+    // 2b. Catat Rujukan Keluar jika pasien dirujuk ke RS / Faskes lain
+    if (dataDischarge.caraKeluar === 'RUJUK' && dataDischarge.faskesTujuan) {
+      await tx.rujukanKeluar.create({
+        data: {
+          kunjunganId,
+          pasienId: kunjungan.pasienId,
+          dokterId: kunjungan.dokterTujuanId,
+          faskesTujuan: dataDischarge.faskesTujuan,
+          poliTujuan: dataDischarge.poliTujuan || 'Spesialis Rujukan',
+          dokterTujuan: dataDischarge.dokterTujuan || null,
+          alasanRujukan: dataDischarge.alasanRujukan || dataDischarge.edukasiPulang || 'Rujukan lanjutan dari rawat inap',
+        },
+      });
+    }
+
+    // 3. Catat edukasi pulang & rencana kontrol di rekam medis jika ada
+    if (kunjungan.rekamMedis && (dataDischarge.edukasiPulang || dataDischarge.rencanaKontrol)) {
+      const existingInstruksi = kunjungan.rekamMedis.instruksiMedis || '';
+      const notes = [
+        existingInstruksi,
+        dataDischarge.edukasiPulang ? `[Edukasi Pulang Inap] ${dataDischarge.edukasiPulang}` : '',
+        dataDischarge.rencanaKontrol ? `[Rencana Kontrol] ${dataDischarge.rencanaKontrol}` : '',
+      ].filter(Boolean).join('\n');
+
+      await tx.rekamMedis.update({
+        where: { id: kunjungan.rekamMedis.id },
+        data: { instruksiMedis: notes },
+      });
+    }
+
+    return updatedKunjungan;
+  });
+
+  // 4. Generate Tagihan Kasir Final (Termasuk Biaya Tempat Tidur x Jumlah Hari Menginap)
+  let tagihanFinal = null;
+  try {
+    tagihanFinal = await kasirService.generateTagihan(kunjunganId);
+  } catch (errTagihan) {
+    console.error(`[Kasir Error] Gagal generate tagihan rawat inap:`, errTagihan.message);
+  }
+
+  // 5. SATUSEHAT Sync
+  try {
+    sendBundleForKunjungan(kunjunganId);
+  } catch (errSS) {
+    console.error(`[SATUSEHAT Error]`, errSS.message);
+  }
+
+  return { kunjungan: result, tagihan: tagihanFinal };
+};
+
+/**
+ * Simpan Catatan Perkembangan Pasien Terintegrasi (CPPT Rawat Inap)
+ * dan otomatis sinkronkan ke Rekam Medis (RME) Kunjungan.
+ */
+const simpanCPPT = async (kunjunganId, user, data) => {
+  const kunjungan = await prisma.kunjungan.findUnique({
+    where: { id: kunjunganId },
+    include: {
+      rekamMedis: true,
+      pasien: true,
+      screening: true,
+      dokterTujuan: true,
+    },
+  });
+
+  if (!kunjungan) {
+    const err = new Error('Data kunjungan rawat inap tidak ditemukan');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const dokterId = user.role?.includes('DOKTER') ? user.id : (kunjungan.dokterTujuanId || user.id);
+
+  // 1. Simpan entitas Catatan Perkembangan (CPPT)
+  const profesi = data.profesi || (user.role === 'PERAWAT' ? 'PERAWAT' : 'DOKTER');
+  const tanggalCatatan = data.tanggalCatatan ? new Date(data.tanggalCatatan) : new Date();
+
+  const cppt = await prisma.catatanPerkembangan.create({
+    data: {
+      kunjunganId: kunjungan.id,
+      pasienId: kunjungan.pasienId,
+      petugasId: user.id,
+      profesi: profesi,
+      tanggalCatatan: tanggalCatatan,
+      subjektif: data.subjektif || null,
+      objektif: data.objektif || null,
+      tandaVital: data.tandaVital || null,
+      asesmen: data.asesmen || null,
+      plan: data.plan || null,
+      instruksiMedis: data.instruksiMedis || null,
+    },
+    include: {
+      petugas: {
+        select: { id: true, namaLengkap: true, username: true, role: true },
+      },
+    },
+  });
+
+  // 2. Jika dokter mengikutsertakan resep terapi obat, simpan resep secara resmi
+  let savedResep = null;
+  if (data.resep && Array.isArray(data.resep) && data.resep.length > 0) {
+    try {
+      savedResep = await simpanResep(kunjunganId, user, data.resep);
+    } catch (resepErr) {
+      console.warn('[simpanCPPT] Gagal menyimpan resep bersama CPPT:', resepErr.message);
+    }
+  }
+
+  // 3. Sinkronkan ke tabel RekamMedis pasien (RME Kunjungan)
+  let rekamMedis;
+  if (kunjungan.rekamMedis) {
+    rekamMedis = await prisma.rekamMedis.update({
+      where: { id: kunjungan.rekamMedis.id },
+      data: {
+        keluhanUtama: data.subjektif !== undefined && data.subjektif !== '' ? data.subjektif : kunjungan.rekamMedis.keluhanUtama,
+        pemeriksaanFisik: data.objektif !== undefined && data.objektif !== '' ? data.objektif : kunjungan.rekamMedis.pemeriksaanFisik,
+        diagnosisKlinis: data.asesmen !== undefined && data.asesmen !== '' ? data.asesmen : kunjungan.rekamMedis.diagnosisKlinis,
+        rencanaTerapi: data.plan !== undefined && data.plan !== '' ? data.plan : kunjungan.rekamMedis.rencanaTerapi,
+        instruksiMedis: data.instruksiMedis !== undefined && data.instruksiMedis !== '' ? data.instruksiMedis : kunjungan.rekamMedis.instruksiMedis,
+        dokterId: dokterId,
+        statusPemeriksaan: 'DIPERIKSA',
+      },
+    });
+  } else {
+    rekamMedis = await prisma.rekamMedis.create({
+      data: {
+        kunjunganId: kunjungan.id,
+        pasienId: kunjungan.pasienId,
+        dokterId: dokterId,
+        keluhanUtama: data.subjektif || 'Catatan CPPT Rawat Inap',
+        pemeriksaanFisik: data.objektif || null,
+        diagnosisKlinis: data.asesmen || null,
+        rencanaTerapi: data.plan || null,
+        instruksiMedis: data.instruksiMedis || null,
+        statusPemeriksaan: 'DIPERIKSA',
+      },
+    });
+  }
+
+  return { cppt, rekamMedis, resep: savedResep };
+};
+
+/**
+ * Get Riwayat CPPT untuk kunjungan rawat inap
+ */
+const getRiwayatCPPT = async (kunjunganId) => {
+  return await prisma.catatanPerkembangan.findMany({
+    where: { kunjunganId },
+    include: {
+      petugas: {
+        select: { id: true, namaLengkap: true, username: true, role: true },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+};
+
+/**
+ * Ambil seluruh resep obat dari kunjungan (rawat jalan / rawat inap / UGD)
+ */
+const getResepByKunjungan = async (kunjunganId) => {
+  return await prisma.resep.findMany({
+    where: { kunjunganId },
+    include: {
+      details: {
+        include: { obat: true },
+      },
+      dokter: {
+        select: { id: true, namaLengkap: true, username: true },
+      },
+      penginput: {
+        select: { id: true, namaLengkap: true, username: true },
+      },
+    },
+    orderBy: { tanggalResep: 'desc' },
+  });
+};
+
+/**
+ * Ambil Rekam Medis Sebelumnya untuk referensi input CPPT dokter.
+ * Urutan prioritas penarikan data sebelumnya:
+ * 1. Catatan CPPT paling terakhir pada kunjungan rawat inap ini
+ * 2. Asesmen Medis Awal Masuk (IGD / Poliklinik) dari kunjungan saat ini
+ * 3. Rekam Medis kunjungan terakhir sebelumnya yang telah selesai
+ */
+const getRekamMedisSebelumnya = async (kunjunganId) => {
+  const kunjungan = await prisma.kunjungan.findUnique({
+    where: { id: kunjunganId },
+    include: {
+      pasien: true,
+      rekamMedis: {
+        include: {
+          dokter: { select: { id: true, namaLengkap: true, role: true } },
+        },
+      },
+      screening: true,
+      diagnosis: { include: { icd10: true } },
+      catatanPerkembangans: {
+        include: {
+          petugas: { select: { id: true, namaLengkap: true, role: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+  });
+
+  if (!kunjungan) {
+    const err = new Error('Data kunjungan tidak ditemukan');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Skenario 1: Sudah ada CPPT sebelumnya pada rawat inap ini
+  if (kunjungan.catatanPerkembangans && kunjungan.catatanPerkembangans.length > 0) {
+    const prev = kunjungan.catatanPerkembangans[0];
+    return {
+      tipeSumber: 'CPPT_TERAKHIR',
+      labelSumber: `Catatan CPPT Terakhir (${prev.profesi})`,
+      tanggal: prev.createdAt,
+      petugas: prev.petugas?.namaLengkap || 'Tenaga Medis',
+      subjektif: prev.subjektif || '',
+      objektif: prev.objektif || '',
+      tandaVital: prev.tandaVital || null,
+      asesmen: prev.asesmen || '',
+      plan: prev.plan || '',
+      instruksiMedis: prev.instruksiMedis || '',
+    };
+  }
+
+  // Skenario 2: Belum ada CPPT di rawat inap, tapi ada Rekam Medis / Screening saat masuk (UGD/Poli)
+  if (kunjungan.rekamMedis || kunjungan.screening) {
+    const rm = kunjungan.rekamMedis;
+    const sc = kunjungan.screening;
+    const dxList = kunjungan.diagnosis?.map(d => d.icd10?.namaPenyakit || d.diagnosisKlinis).filter(Boolean).join(', ');
+
+    return {
+      tipeSumber: 'ASESMEN_AWAL_MASUK',
+      labelSumber: 'Asesmen Medis Awal Masuk (IGD / Poliklinik)',
+      tanggal: rm?.createdAt || sc?.tanggalScreening || kunjungan.tanggalRegistrasi,
+      petugas: rm?.dokter?.namaLengkap || 'Dokter Pemeriksa Awal',
+      subjektif: rm?.keluhanUtama || sc?.keluhanUtama || '',
+      objektif: rm?.pemeriksaanFisik || (sc ? `TD: ${sc.tekananDarahSistolik || '-'}/${sc.tekananDarahDiastolik || '-'}, Nadi: ${sc.nadi || '-'}, Suhu: ${sc.suhuTubuh || '-'}°C, RR: ${sc.frekuensiNapas || '-'}` : ''),
+      tandaVital: sc ? {
+        tdSistolik: sc.tekananDarahSistolik,
+        tdDiastolik: sc.tekananDarahDiastolik,
+        nadi: sc.nadi,
+        suhu: sc.suhuTubuh,
+        rr: sc.frekuensiNapas,
+        spo2: sc.saturasiOksigen,
+      } : null,
+      asesmen: rm?.diagnosisKlinis || dxList || '',
+      plan: rm?.rencanaTerapi || '',
+      instruksiMedis: rm?.instruksiMedis || '',
+    };
+  }
+
+  // Skenario 3: Cari riwayat kunjungan paling baru sebelumnya dari pasien ini
+  const prevKunjungan = await prisma.kunjungan.findFirst({
+    where: {
+      pasienId: kunjungan.pasienId,
+      id: { not: kunjunganId },
+      statusKunjungan: { in: ['SELESAI', 'PULANG', 'MENUNGGU_KASIR'] },
+    },
+    orderBy: { tanggalRegistrasi: 'desc' },
+    include: {
+      rekamMedis: {
+        include: { dokter: { select: { id: true, namaLengkap: true } } },
+      },
+      screening: true,
+      diagnosis: { include: { icd10: true } },
+    },
+  });
+
+  if (prevKunjungan && (prevKunjungan.rekamMedis || prevKunjungan.screening)) {
+    const prm = prevKunjungan.rekamMedis;
+    const psc = prevKunjungan.screening;
+    const pdx = prevKunjungan.diagnosis?.map(d => d.icd10?.namaPenyakit || d.diagnosisKlinis).filter(Boolean).join(', ');
+
+    return {
+      tipeSumber: 'KUNJUNGAN_SEBELUMNYA',
+      labelSumber: 'Rekam Medis Kunjungan Terakhir Pasien',
+      tanggal: prevKunjungan.tanggalRegistrasi,
+      petugas: prm?.dokter?.namaLengkap || 'Dokter Kunjungan Lalu',
+      subjektif: prm?.keluhanUtama || psc?.keluhanUtama || '',
+      objektif: prm?.pemeriksaanFisik || '',
+      tandaVital: psc ? {
+        tdSistolik: psc.tekananDarahSistolik,
+        tdDiastolik: psc.tekananDarahDiastolik,
+        nadi: psc.nadi,
+        suhu: psc.suhuTubuh,
+        rr: psc.frekuensiNapas,
+        spo2: psc.saturasiOksigen,
+      } : null,
+      asesmen: prm?.diagnosisKlinis || pdx || '',
+      plan: prm?.rencanaTerapi || '',
+      instruksiMedis: prm?.instruksiMedis || '',
+    };
+  }
+
+  return null;
 };
 
 module.exports = {
@@ -1021,8 +1635,16 @@ module.exports = {
   getAlergiByKunjungan,
   simpanResep,
   simpanRujukan,
+  assignRawatInap,
+  dischargeRawatInap,
   pulang,
+  catatMeninggal,
   getRiwayatDokter,
   getRiwayatPasienByRM,
   sendBundleForKunjungan,
+  simpanCPPT,
+  getRiwayatCPPT,
+  getRekamMedisSebelumnya,
+  getResepByKunjungan,
 };
+
