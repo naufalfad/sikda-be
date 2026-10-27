@@ -6,8 +6,10 @@ const { protect } = require('../middlewares/auth.middleware');
 router.use(protect);
 
 router.post('/order', laboratoriumController.createOrder);
+router.get('/dashboard-stats', laboratoriumController.getDashboardStats);
 router.get('/antrian', laboratoriumController.getAntrian);
 router.get('/order/kunjungan/:kunjunganId', laboratoriumController.getOrderByKunjungan);
+router.get('/riwayat-pasien/:pasienId', laboratoriumController.getRiwayatLabByPasien);
 router.put('/order/:id/hasil', laboratoriumController.simpanHasil);
 
 module.exports = router;

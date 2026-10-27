@@ -28,7 +28,11 @@ const getRuangans = async (query = {}, user) => {
   }
 
   if (kategoriRuangan) {
-    where.kategoriRuangan = kategoriRuangan;
+    if (kategoriRuangan === 'UGD' || kategoriRuangan === 'IGD') {
+      where.kategoriRuangan = { in: ['UGD', 'IGD'] };
+    } else {
+      where.kategoriRuangan = kategoriRuangan;
+    }
   }
 
   if (statusAktif !== undefined) {
@@ -244,7 +248,7 @@ const createBed = async (data) => {
     data: {
       ruanganId: data.ruanganId,
       nomorBed: data.nomorBed,
-      kelasKamar: data.kelasKamar || 'NON_KELAS_IGD',
+      kelasKamar: data.kelasKamar || 'NON_KELAS_UGD',
       statusBed: data.statusBed || 'TERSEDIA',
       gambarUrl: data.gambarUrl || '/images/aset/bed.jpg',
       operationalStatus: data.statusBed === 'TERISI' ? 'O' : (data.statusBed === 'PERBAIKAN' ? 'C' : 'U'),

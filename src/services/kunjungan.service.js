@@ -1165,6 +1165,438 @@ const getKunjunganFhirPreview = async (id) => {
   return bundle;
 };
 
+/**
+ * Helper untuk menentukan shift kerja (Puskesmas / RS standar)
+ * Pagi : 07:00 - 13:59:59 (07:00 - 14:00)
+ * Siang: 14:00 - 20:59:59 (14:00 - 21:00)
+ * Malam: 21:00 - 06:59:59 (21:00 - 07:00)
+ */
+const determineShift = (date) => {
+  if (!date) return 'Pagi';
+  const d = new Date(date);
+  const hour = d.getHours();
+  if (hour >= 7 && hour < 14) return 'Pagi';
+  if (hour >= 14 && hour < 21) return 'Siang';
+  return 'Malam';
+};
+
+const getCurrentShiftInfo = (date = new Date()) => {
+  const shift = determineShift(date);
+  if (shift === 'Pagi') return { id: 'Pagi', label: 'Shift Pagi', timeRange: '07:00 - 14:00' };
+  if (shift === 'Siang') return { id: 'Siang', label: 'Shift Siang', timeRange: '14:00 - 21:00' };
+  return { id: 'Malam', label: 'Shift Malam', timeRange: '21:00 - 07:00' };
+};
+
+const parseDateRange = (dateStr) => {
+  let targetDate;
+  if (dateStr && !isNaN(new Date(dateStr).getTime())) {
+    targetDate = new Date(dateStr);
+  } else {
+    targetDate = new Date();
+  }
+  const startOfDay = new Date(targetDate);
+  startOfDay.setHours(0, 0, 0, 0);
+
+  const endOfDay = new Date(targetDate);
+  endOfDay.setHours(23, 59, 59, 999);
+
+  return { startOfDay, endOfDay, targetDate };
+};
+
+const STATUS_SELESAI = [
+  'SELESAI',
+  'MENUNGGU_FARMASI',
+  'MENUNGGU_KASIR',
+  'PULANG',
+  'DIRUJUK',
+  'RAWAT_INAP'
+];
+
+/**
+ * Get Kinerja Harian Dokter (Spesifik per dokter per hari/shift)
+ */
+const getDokterKinerjaHarian = async (user, { tanggal, dokterId } = {}) => {
+  const { startOfDay, endOfDay, targetDate } = parseDateRange(tanggal);
+  const currentShiftInfo = getCurrentShiftInfo();
+
+  // Tentukan dokter yang dimonitor
+  let targetDokterId = user.id;
+  if (['ADMIN', 'ADMINISTRASI', 'DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role) && dokterId) {
+    targetDokterId = dokterId;
+  }
+
+  const dokter = await prisma.user.findUnique({
+    where: { id: targetDokterId },
+    select: {
+      id: true,
+      username: true,
+      namaLengkap: true,
+      role: true,
+      poliklinik: { select: { id: true, namaPoli: true } },
+      faskes: { select: { id: true, namaFaskes: true } },
+    }
+  });
+
+  if (!dokter) {
+    const err = new Error('Data dokter tidak ditemukan');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const whereClause = {
+    OR: [
+      { dokterTujuanId: targetDokterId },
+      { rekamMedis: { dokterId: targetDokterId } }
+    ],
+    tanggalRegistrasi: { gte: startOfDay, lte: endOfDay }
+  };
+  applyFaskesScope(whereClause, user);
+
+  const kunjungans = await prisma.kunjungan.findMany({
+    where: whereClause,
+    include: {
+      pasien: {
+        select: {
+          id: true,
+          namaLengkap: true,
+          noRM: true,
+          jenisKelamin: true,
+          tanggalLahir: true,
+        }
+      },
+      poliklinik: {
+        select: { id: true, namaPoli: true }
+      },
+      rekamMedis: {
+        select: {
+          id: true,
+          dokterId: true,
+          statusPemeriksaan: true,
+          keluhanUtama: true,
+          diagnosisKlinis: true,
+          updatedAt: true,
+        }
+      },
+      diagnosis: {
+        include: { icd10: true }
+      },
+      tindakans: {
+        include: { icd9: true }
+      },
+      resep: {
+        select: { id: true, status: true }
+      }
+    },
+    orderBy: [
+      { waktuPemeriksaanSelesai: 'desc' },
+      { updatedAt: 'desc' }
+    ]
+  });
+
+  const selesaiList = [];
+  let sedangDiperiksa = 0;
+  let antre = 0;
+  let totalDurationMinutes = 0;
+  let countValidDuration = 0;
+
+  const shiftCount = {
+    pagi: 0,
+    siang: 0,
+    malam: 0
+  };
+
+  kunjungans.forEach((k) => {
+    const isSelesai = STATUS_SELESAI.includes(k.statusKunjungan) || k.rekamMedis?.statusPemeriksaan === 'SELESAI';
+
+    if (isSelesai) {
+      const completedTime = k.waktuPemeriksaanSelesai || k.rekamMedis?.updatedAt || k.updatedAt;
+      const shift = determineShift(completedTime);
+
+      if (shift === 'Pagi') shiftCount.pagi++;
+      else if (shift === 'Siang') shiftCount.siang++;
+      else if (shift === 'Malam') shiftCount.malam++;
+
+      let durasiMenit = null;
+      if (k.waktuPemeriksaanMulai && k.waktuPemeriksaanSelesai) {
+        const diff = Math.round((new Date(k.waktuPemeriksaanSelesai) - new Date(k.waktuPemeriksaanMulai)) / 60000);
+        if (diff > 0 && diff < 300) {
+          durasiMenit = diff;
+          totalDurationMinutes += diff;
+          countValidDuration++;
+        }
+      }
+
+      // Hitung usia
+      let usia = null;
+      if (k.pasien?.tanggalLahir) {
+        usia = Math.floor((new Date() - new Date(k.pasien.tanggalLahir)) / (365.25 * 24 * 60 * 60 * 1000));
+      }
+
+      // Diagnosa utama
+      const diagnosaUtama = k.diagnosis?.find(d => d.jenisDiagnosis === 'Utama')?.icd10?.nama_penyakit ||
+        k.diagnosis?.[0]?.icd10?.nama_penyakit ||
+        k.rekamMedis?.diagnosisKlinis ||
+        '-';
+
+      selesaiList.push({
+        id: k.id,
+        noAntrian: k.noAntrian,
+        noRM: k.pasien?.noRM || '-',
+        namaPasien: k.pasien?.namaLengkap || 'Pasien',
+        jenisKelamin: k.pasien?.jenisKelamin || '-',
+        usia,
+        poliklinik: k.poliklinik?.namaPoli || 'Poli Umum',
+        jenisPelayanan: k.jenisPelayanan,
+        jamRegistrasi: k.jamRegistrasi,
+        jamMulai: k.waktuPemeriksaanMulai ? new Date(k.waktuPemeriksaanMulai).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : null,
+        jamSelesai: completedTime ? new Date(completedTime).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-',
+        durasiMenit,
+        shift,
+        diagnosaUtama,
+        tindakanCount: k.tindakans?.length || 0,
+        resepCount: k.resep?.length || 0,
+        statusKunjungan: k.statusKunjungan,
+        statusPulang: k.statusPulang || 'SELESAI'
+      });
+    } else if (k.statusKunjungan === 'DIPERIKSA') {
+      sedangDiperiksa++;
+    } else if (['MENUNGGU_DOKTER', 'ANTRI_POLI', 'MENUNGGU'].includes(k.statusKunjungan)) {
+      antre++;
+    }
+  });
+
+  const totalSelesaiHariIni = selesaiList.length;
+  const totalSelesaiShiftIni = shiftCount[currentShiftInfo.id.toLowerCase()] || 0;
+  const rataRataWaktuMenit = countValidDuration > 0 ? Math.round(totalDurationMinutes / countValidDuration) : 0;
+
+  // Status Beban Kerja sesuai Standar Kemenkes (<=30 Normal, 31-40 Optimal, >40 Beban Tinggi)
+  let statusBebanKerja = 'NORMAL';
+  if (totalSelesaiHariIni > 40) statusBebanKerja = 'TINGGI';
+  else if (totalSelesaiHariIni > 30) statusBebanKerja = 'OPTIMAL';
+
+  return {
+    dokter: {
+      id: dokter.id,
+      namaLengkap: dokter.namaLengkap,
+      username: dokter.username,
+      role: dokter.role,
+      poliklinik: dokter.poliklinik?.namaPoli || 'Poli Umum',
+      faskes: dokter.faskes?.namaFaskes || 'Puskesmas',
+    },
+    tanggal: targetDate.toISOString().split('T')[0],
+    currentShift: currentShiftInfo,
+    totalSelesaiHariIni,
+    totalSelesaiShiftIni,
+    shiftBreakdown: {
+      pagi: { count: shiftCount.pagi, label: 'Shift Pagi (07:00 - 14:00)' },
+      siang: { count: shiftCount.siang, label: 'Shift Siang (14:00 - 21:00)' },
+      malam: { count: shiftCount.malam, label: 'Shift Malam (21:00 - 07:00)' },
+    },
+    sedangDiperiksa,
+    antre,
+    rataRataWaktuMenit,
+    statusBebanKerja,
+    daftarPasienSelesai: selesaiList
+  };
+};
+
+/**
+ * Monitoring Kinerja Semua Dokter untuk Admin & Dinas Kesehatan
+ */
+const getAdminMonitoringDokter = async (user, { tanggal, poliklinikId } = {}) => {
+  const { startOfDay, endOfDay, targetDate } = parseDateRange(tanggal);
+  const currentShiftInfo = getCurrentShiftInfo();
+
+  // Filter dokter berdasarkan faskes
+  const doctorWhere = {
+    role: { in: ['DOKTER', 'DOKTER_UGD'] }
+  };
+  if (poliklinikId) {
+    doctorWhere.poliklinikId = poliklinikId;
+  }
+  applyFaskesScope(doctorWhere, user);
+
+  const doctors = await prisma.user.findMany({
+    where: doctorWhere,
+    select: {
+      id: true,
+      username: true,
+      namaLengkap: true,
+      role: true,
+      faskesId: true,
+      poliklinikId: true,
+      poliklinik: { select: { id: true, namaPoli: true } },
+      faskes: { select: { id: true, namaFaskes: true } },
+    },
+    orderBy: [
+      { namaLengkap: 'asc' }
+    ]
+  });
+
+  // Query semua kunjungan pada tanggal ini di faskes
+  const kunjunganWhere = {
+    tanggalRegistrasi: { gte: startOfDay, lte: endOfDay }
+  };
+  applyFaskesScope(kunjunganWhere, user);
+
+  const kunjungans = await prisma.kunjungan.findMany({
+    where: kunjunganWhere,
+    include: {
+      pasien: {
+        select: {
+          id: true,
+          namaLengkap: true,
+          noRM: true,
+          jenisKelamin: true,
+          tanggalLahir: true,
+        }
+      },
+      poliklinik: { select: { id: true, namaPoli: true } },
+      rekamMedis: {
+        select: {
+          id: true,
+          dokterId: true,
+          statusPemeriksaan: true,
+          diagnosisKlinis: true,
+          updatedAt: true,
+        }
+      },
+      diagnosis: {
+        include: { icd10: true }
+      },
+      tindakans: {
+        include: { icd9: true }
+      },
+    },
+    orderBy: [
+      { waktuPemeriksaanSelesai: 'desc' },
+      { updatedAt: 'desc' }
+    ]
+  });
+
+  let totalPasienSelesaiFaskes = 0;
+  const shiftFaskes = { pagi: 0, siang: 0, malam: 0 };
+
+  const dokterMonitoringList = doctors.map((doc) => {
+    // Ambil semua kunjungan dokter ini
+    const docVisits = kunjungans.filter(k => 
+      k.dokterTujuanId === doc.id || k.rekamMedis?.dokterId === doc.id
+    );
+
+    const shiftCount = { pagi: 0, siang: 0, malam: 0 };
+    const selesaiList = [];
+    let sedangDiperiksa = 0;
+    let antre = 0;
+    let totalDurasi = 0;
+    let countDurasi = 0;
+
+    docVisits.forEach((k) => {
+      const isSelesai = STATUS_SELESAI.includes(k.statusKunjungan) || k.rekamMedis?.statusPemeriksaan === 'SELESAI';
+
+      if (isSelesai) {
+        const completedTime = k.waktuPemeriksaanSelesai || k.rekamMedis?.updatedAt || k.updatedAt;
+        const shift = determineShift(completedTime);
+
+        if (shift === 'Pagi') {
+          shiftCount.pagi++;
+          shiftFaskes.pagi++;
+        } else if (shift === 'Siang') {
+          shiftCount.siang++;
+          shiftFaskes.siang++;
+        } else if (shift === 'Malam') {
+          shiftCount.malam++;
+          shiftFaskes.malam++;
+        }
+
+        totalPasienSelesaiFaskes++;
+
+        let durasiMenit = null;
+        if (k.waktuPemeriksaanMulai && k.waktuPemeriksaanSelesai) {
+          const diff = Math.round((new Date(k.waktuPemeriksaanSelesai) - new Date(k.waktuPemeriksaanMulai)) / 60000);
+          if (diff > 0 && diff < 300) {
+            durasiMenit = diff;
+            totalDurasi += diff;
+            countDurasi++;
+          }
+        }
+
+        const diagnosaUtama = k.diagnosis?.find(d => d.jenisDiagnosis === 'Utama')?.icd10?.nama_penyakit ||
+          k.diagnosis?.[0]?.icd10?.nama_penyakit ||
+          k.rekamMedis?.diagnosisKlinis ||
+          '-';
+
+        selesaiList.push({
+          id: k.id,
+          noAntrian: k.noAntrian,
+          noRM: k.pasien?.noRM || '-',
+          namaPasien: k.pasien?.namaLengkap || 'Pasien',
+          poliklinik: k.poliklinik?.namaPoli || doc.poliklinik?.namaPoli || 'Poli',
+          jenisPelayanan: k.jenisPelayanan,
+          jamMulai: k.waktuPemeriksaanMulai ? new Date(k.waktuPemeriksaanMulai).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : null,
+          jamSelesai: completedTime ? new Date(completedTime).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : '-',
+          durasiMenit,
+          shift,
+          diagnosaUtama,
+          statusKunjungan: k.statusKunjungan,
+          statusPulang: k.statusPulang || 'SELESAI'
+        });
+      } else if (k.statusKunjungan === 'DIPERIKSA') {
+        sedangDiperiksa++;
+      } else if (['MENUNGGU_DOKTER', 'ANTRI_POLI', 'MENUNGGU'].includes(k.statusKunjungan)) {
+        antre++;
+      }
+    });
+
+    const totalSelesai = selesaiList.length;
+    const rataRataWaktuMenit = countDurasi > 0 ? Math.round(totalDurasi / countDurasi) : 0;
+
+    let statusBebanKerja = 'NORMAL';
+    if (totalSelesai > 40) statusBebanKerja = 'TINGGI';
+    else if (totalSelesai > 30) statusBebanKerja = 'OPTIMAL';
+
+    return {
+      dokter: {
+        id: doc.id,
+        namaLengkap: doc.namaLengkap,
+        username: doc.username,
+        role: doc.role,
+        poliklinik: doc.poliklinik?.namaPoli || (doc.role === 'DOKTER_UGD' ? 'UGD / Gawat Darurat' : 'Poli Umum'),
+      },
+      totalSelesai,
+      totalSelesaiShiftIni: shiftCount[currentShiftInfo.id.toLowerCase()] || 0,
+      shiftBreakdown: shiftCount,
+      sedangDiperiksa,
+      antre,
+      rataRataWaktuMenit,
+      statusBebanKerja,
+      isAktifHariIni: totalSelesai > 0 || sedangDiperiksa > 0,
+      daftarPasienSelesai: selesaiList
+    };
+  });
+
+  const dokterAktifHariIni = dokterMonitoringList.filter(d => d.isAktifHariIni).length;
+  const rataRataPasienPerDokter = dokterAktifHariIni > 0 ? Math.round(totalPasienSelesaiFaskes / dokterAktifHariIni) : 0;
+
+  let statusBebanFaskes = 'NORMAL';
+  if (rataRataPasienPerDokter > 40) statusBebanFaskes = 'TINGGI';
+  else if (rataRataPasienPerDokter > 30) statusBebanFaskes = 'OPTIMAL';
+
+  return {
+    faskes: user.faskesId ? { id: user.faskesId } : null,
+    tanggal: targetDate.toISOString().split('T')[0],
+    currentShift: currentShiftInfo,
+    ringkasanFaskes: {
+      totalDokter: doctors.length,
+      dokterAktifHariIni,
+      totalPasienSelesai: totalPasienSelesaiFaskes,
+      rataRataPasienPerDokter,
+      statusBebanFaskes,
+      shiftBreakdown: shiftFaskes
+    },
+    dokterList: dokterMonitoringList
+  };
+};
+
 module.exports = {
   getKunjunganScreening,
   panggilKunjungan,
@@ -1173,5 +1605,7 @@ module.exports = {
   getDashboardStats,
   getPerawatDashboardStats,
   getDokterDashboardStats,
+  getDokterKinerjaHarian,
+  getAdminMonitoringDokter,
   getKunjunganFhirPreview,
 };

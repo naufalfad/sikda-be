@@ -63,9 +63,30 @@ const getOrderByKunjungan = async (req, res, next) => {
   }
 };
 
+const getDashboardStats = async (req, res, next) => {
+  try {
+    const data = await laboratoriumService.getDashboardStats(req.user);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getRiwayatLabByPasien = async (req, res, next) => {
+  try {
+    const { pasienId } = req.params;
+    const data = await laboratoriumService.getRiwayatLabByPasien(pasienId);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createOrder,
   getAntrian,
   simpanHasil,
-  getOrderByKunjungan
+  getOrderByKunjungan,
+  getDashboardStats,
+  getRiwayatLabByPasien
 };

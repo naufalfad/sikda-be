@@ -20,4 +20,8 @@ router.get('/vaksin/stok', farmasiController.getStokVaksinFaskes);
 router.post('/vaksin/masuk', farmasiController.tambahStokVaksinMasuk);
 router.post('/vaksin/keluar', farmasiController.kurangiStokVaksinKeluar);
 
+// Rute untuk Log Riwayat Mutasi Stok (Obat, Vaksin, BMHP) & Kartu Stok
+router.get('/mutasi', farmasiController.getRiwayatMutasiStok);
+router.get('/mutasi/kartu-stok/:itemId', farmasiController.getKartuStokItem);
+
 module.exports = router;

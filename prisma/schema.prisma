@@ -414,6 +414,7 @@ model RekamMedis {
   odontogram       Json? // Interactive Odontogram FDI Map
   dmft             Json? // Indeks DMF-T (D, M, F, Total)
   oralFindings     Json? // Occlusi, Torus, Palatum, Diastema, Anomali
+  fotoObjektif     Json? // Dokumentasi Foto Objektif / Foto Klinis Luka Pasien
 
   // A - Asesmen
   diagnosisKlinis String? @db.Text
@@ -642,6 +643,7 @@ model MasterObat {
 
   resepDetails ResepDetail[]
   stokFaskes   StokObatFaskes[]
+  mutasiStoks  MutasiStokLogistik[]
 }
 
 model Resep {
@@ -934,6 +936,7 @@ model MasterVaksin {
   updatedAt      DateTime @updatedAt
 
   batchVaksin BatchVaksin[]
+  mutasiStoks MutasiStokLogistik[]
 }
 
 // 2. Tabel Logistik Sementara: Batch Vaksin yang tersedia di kulkas Puskesmas
@@ -1433,7 +1436,7 @@ model TempatTidur {
   ruangan   MasterRuangan @relation(fields: [ruanganId], references: [id], onDelete: Cascade)
 
   nomorBed   String // Contoh: BED-01, BED-02
-  kelasKamar String @default("NON_KELAS_IGD") // KELAS_1, KELAS_2, KELAS_3, VIP, NON_KELAS_IGD, ISOLASI
+  kelasKamar String @default("NON_KELAS_UGD") // KELAS_1, KELAS_2, KELAS_3, VIP, NON_KELAS_UGD, ISOLASI
   statusBed  String @default("TERSEDIA") // TERSEDIA, TERISI, PERBAIKAN, DIBERSIHKAN
   gambarUrl  String? // Foto / thumbnail visual tempat tidur
 
@@ -1577,6 +1580,7 @@ model Faskes {
   mutasiNakesAsal   MutasiTenagaMedis[]      @relation("FaskesAsalMutasi")
   logAgregats       LogAgregatHarianDinkes[]
   bookingsOnline    BookingAntreanOnline[]
+  mutasiStoks       MutasiStokLogistik[]
 }
 
 // ==========================================
@@ -1600,6 +1604,46 @@ model StokObatFaskes {
   updatedAt DateTime @updatedAt
 
   @@unique([faskesId, obatId, noBatch])
+}
+
+// ==========================================
+// BUKU JURNAL / LOG MUTASI STOK LOGISTIK
+// (Obat, Vaksin, dan BMHP Keluar-Masuk)
+// ==========================================
+model MutasiStokLogistik {
+  id              String        @id @default(cuid())
+  faskesId        String
+  faskes          Faskes        @relation(fields: [faskesId], references: [id], onDelete: Cascade)
+
+  kategoriItem    String        @default("OBAT") // "OBAT", "BMHP", "VAKSIN"
+  obatId          String?
+  obat            MasterObat?   @relation(fields: [obatId], references: [id], onDelete: SetNull)
+  vaksinId        String?
+  vaksin          MasterVaksin? @relation(fields: [vaksinId], references: [id], onDelete: SetNull)
+
+  namaItem        String
+  sediaan         String?
+  noBatch         String        @default("DEFAULT")
+  tanggalExpired  DateTime?
+
+  jenisMutasi     String        // "MASUK", "KELUAR", "PENYESUAIAN", "OPNAME"
+  jumlahPerubahan Int           // (+N atau -N)
+  stokAwal        Int           @default(0)
+  stokAkhir       Int           @default(0)
+
+  referensi       String?       // No Resep / No Faktur / No Registrasi / Bukti Droping
+  keterangan      String?       // Alasan pengeluaran / nama pasien / rincian
+  petugasId       String?
+  petugasNama     String?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @default(now()) @updatedAt
+
+  @@index([faskesId, createdAt(sort: Desc)])
+  @@index([kategoriItem])
+  @@index([obatId])
+  @@index([vaksinId])
+  @@index([noBatch])
 }
 
 // ==========================================

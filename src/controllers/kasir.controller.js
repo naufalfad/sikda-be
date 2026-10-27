@@ -43,6 +43,19 @@ const generateTagihan = async (req, res, next) => {
   }
 };
 
+const previewTagihan = async (req, res, next) => {
+  try {
+    const { kunjunganId, resepPulang, bedInfo, lamaHari } = req.body;
+    if (!kunjunganId) {
+      return res.status(400).json({ success: false, message: 'kunjunganId wajib diisi' });
+    }
+    const preview = await kasirService.previewTagihan(kunjunganId, { resepPulang, bedInfo, lamaHari });
+    res.json({ success: true, data: preview });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const prosesPembayaran = async (req, res, next) => {
   try {
     const tagihanId = req.params.tagihanId;
@@ -59,5 +72,6 @@ module.exports = {
   getRiwayatKasir,
   getTagihan,
   generateTagihan,
+  previewTagihan,
   prosesPembayaran,
 };

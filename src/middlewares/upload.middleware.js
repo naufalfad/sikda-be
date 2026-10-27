@@ -51,7 +51,38 @@ const uploadImage = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // Limit 5MB
 });
 
+// Foto Klinis Pasien (SOAP Objektif) Upload to disk
+const rmeFotoDir = path.join(__dirname, '../../uploads/rme-foto');
+if (!fs.existsSync(rmeFotoDir)) {
+  fs.mkdirSync(rmeFotoDir, { recursive: true });
+}
+
+const rmeFotoStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, rmeFotoDir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname) || '.jpg';
+    const uniqueSuffix = 'foto-rme-' + Date.now() + '-' + Math.round(Math.random() * 1e9) + ext;
+    cb(null, uniqueSuffix);
+  }
+});
+
+const uploadFotoKlinis = multer({
+  storage: rmeFotoStorage,
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Hanya file gambar (JPG, PNG, WEBP) yang diperbolehkan!'), false);
+    }
+  },
+  limits: { fileSize: 10 * 1024 * 1024 } // Limit 10MB per foto
+});
+
 module.exports = {
   uploadPks,
-  uploadImage
+  uploadImage,
+  uploadFotoKlinis,
+  rmeFotoDir
 };

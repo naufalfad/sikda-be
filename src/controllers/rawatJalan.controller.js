@@ -247,7 +247,7 @@ const catatMeninggal = async (req, res, next) => {
 const dischargeRawatInap = async (req, res, next) => {
   try {
     const { kunjunganId } = req.params;
-    const data = await rawatJalanService.dischargeRawatInap(kunjunganId, req.body);
+    const data = await rawatJalanService.dischargeRawatInap(kunjunganId, req.body, req.user);
     res.status(200).json({
       success: true,
       message: 'Pasien rawat inap berhasil dipulangkan dan tagihan difinalisasi ke Kasir',
@@ -299,6 +299,66 @@ const getRekamMedisSebelumnya = async (req, res, next) => {
   }
 };
 
+const fs = require('fs');
+const path = require('path');
+const { rmeFotoDir } = require('../middlewares/upload.middleware');
+
+const uploadFotoKlinis = async (req, res, next) => {
+  try {
+    let uploadedFiles = [];
+
+    // 1. Tangani file upload dari multipart (multer)
+    if (req.files && req.files.length > 0) {
+      uploadedFiles = req.files.map(file => ({
+        url: `/uploads/rme-foto/${file.filename}`,
+        namaFile: file.originalname,
+        size: file.size,
+        waktuAmbil: new Date().toISOString()
+      }));
+    } else if (req.file) {
+      uploadedFiles = [{
+        url: `/uploads/rme-foto/${req.file.filename}`,
+        namaFile: req.file.originalname,
+        size: req.file.size,
+        waktuAmbil: new Date().toISOString()
+      }];
+    }
+
+    // 2. Tangani upload dari Kamera Langsung (Base64 data URL)
+    if (req.body.base64Image) {
+      const base64Data = req.body.base64Image.replace(/^data:image\/\w+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+      const filename = `foto-kamera-${Date.now()}-${Math.round(Math.random() * 1e9)}.jpg`;
+      const filePath = path.join(rmeFotoDir, filename);
+
+      fs.writeFileSync(filePath, buffer);
+
+      uploadedFiles.push({
+        url: `/uploads/rme-foto/${filename}`,
+        namaFile: req.body.namaFile || 'Foto Kamera',
+        size: buffer.length,
+        keterangan: req.body.keterangan || '',
+        waktuAmbil: new Date().toISOString()
+      });
+    }
+
+    if (uploadedFiles.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tidak ada file foto atau data gambar yang diterima'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${uploadedFiles.length} foto klinis berhasil diunggah`,
+      data: uploadedFiles
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getAntrianDokter,
   mulaiPemeriksaan,
@@ -324,5 +384,6 @@ module.exports = {
   simpanCPPT,
   getRiwayatCPPT,
   getRekamMedisSebelumnya,
+  uploadFotoKlinis,
 };
 

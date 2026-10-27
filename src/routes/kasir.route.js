@@ -9,6 +9,7 @@ const { protect } = require('../middlewares/auth.middleware');
 router.get('/antrian', protect, kasirController.getAntrianKasir);
 router.get('/riwayat', protect, kasirController.getRiwayatKasir);
 router.post('/generate', protect, kasirController.generateTagihan);
+router.post('/preview', protect, kasirController.previewTagihan);
 router.get('/:tagihanId', protect, kasirController.getTagihan);
 router.post('/:tagihanId/bayar', protect, kasirController.prosesPembayaran);
 

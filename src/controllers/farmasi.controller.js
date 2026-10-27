@@ -3,6 +3,7 @@ const prisma = new PrismaClient();
 const satusehatService = require('../services/satusehat.service');
 const SatuSehatGateway = require('../services/satusehat/gateway.service');
 const { toRawatJalanBundle } = require('../utils/fhir-mappers');
+const { catatMutasiStok } = require('../utils/mutasiStok.helper');
 
 // 1. Get Antrian Farmasi (MENUNGGU_FARMASI)
 exports.getAntrianFarmasi = async (req, res) => {
@@ -154,11 +155,29 @@ exports.prosesResep = async (req, res) => {
             });
 
             if (specificBatch && specificBatch.stok >= detail.jumlah) {
-              await tx.stokObatFaskes.update({
+              const updatedBatch = await tx.stokObatFaskes.update({
                 where: { id: specificBatch.id },
                 data: {
                   stok: { decrement: detail.jumlah }
                 }
+              });
+
+              await catatMutasiStok(tx, {
+                faskesId: targetFaskesId,
+                kategoriItem: specificBatch.obat?.kategori === 'BMHP' ? 'BMHP' : 'OBAT',
+                obatId: detail.obatId,
+                namaItem: specificBatch.obat?.namaObat || detail.obat?.namaObat || 'Obat Resep',
+                sediaan: specificBatch.obat?.sediaan || detail.obat?.sediaan,
+                noBatch: specificBatch.noBatch,
+                tanggalExpired: specificBatch.tanggalExpired,
+                jenisMutasi: 'KELUAR',
+                jumlahPerubahan: -detail.jumlah,
+                stokAwal: specificBatch.stok,
+                stokAkhir: updatedBatch.stok,
+                referensi: `RESEP-${resep.kunjungan?.noAntrian || id.slice(-6)}`,
+                keterangan: `Resep Pasien ${resep.pasien?.namaLengkap || ''} (${resep.pasien?.noRM || ''})`,
+                petugasId: req.user?.id,
+                petugasNama: req.user?.namaLengkap || req.user?.username || 'Petugas Farmasi'
               });
               continue;
             }
@@ -188,12 +207,31 @@ exports.prosesResep = async (req, res) => {
           for (const batch of batches) {
             if (sisaDibutuhkan <= 0) break;
             const potong = Math.min(batch.stok, sisaDibutuhkan);
-            await tx.stokObatFaskes.update({
+            const updatedBatch = await tx.stokObatFaskes.update({
               where: { id: batch.id },
               data: {
                 stok: { decrement: potong }
               }
             });
+
+            await catatMutasiStok(tx, {
+              faskesId: targetFaskesId,
+              kategoriItem: batch.obat?.kategori === 'BMHP' ? 'BMHP' : 'OBAT',
+              obatId: detail.obatId,
+              namaItem: batch.obat?.namaObat || detail.obat?.namaObat || 'Obat Resep',
+              sediaan: batch.obat?.sediaan || detail.obat?.sediaan,
+              noBatch: batch.noBatch,
+              tanggalExpired: batch.tanggalExpired,
+              jenisMutasi: 'KELUAR',
+              jumlahPerubahan: -potong,
+              stokAwal: batch.stok,
+              stokAkhir: updatedBatch.stok,
+              referensi: `RESEP-${resep.kunjungan?.noAntrian || id.slice(-6)}`,
+              keterangan: `Resep Pasien ${resep.pasien?.namaLengkap || ''} (${resep.pasien?.noRM || ''})`,
+              petugasId: req.user?.id,
+              petugasNama: req.user?.namaLengkap || req.user?.username || 'Petugas Farmasi'
+            });
+
             sisaDibutuhkan -= potong;
           }
         }
@@ -452,6 +490,28 @@ exports.tambahStokMasuk = async (req, res) => {
       }
     });
 
+    const isBmhp = stokUpdated.obat?.kategori === 'BMHP';
+    const stokAkhir = stokUpdated.stok;
+    const stokAwal = stokAkhir - qty;
+
+    await catatMutasiStok(prisma, {
+      faskesId,
+      kategoriItem: isBmhp ? 'BMHP' : 'OBAT',
+      obatId: stokUpdated.obatId,
+      namaItem: stokUpdated.obat?.namaObat || 'Item Logistik',
+      sediaan: stokUpdated.obat?.sediaan,
+      noBatch: stokUpdated.noBatch,
+      tanggalExpired: stokUpdated.tanggalExpired,
+      jenisMutasi: 'MASUK',
+      jumlahPerubahan: qty,
+      stokAwal,
+      stokAkhir,
+      referensi: req.body.referensi || `PENERIMAAN-${Date.now().toString().slice(-6)}`,
+      keterangan: req.body.keterangan || 'Penerimaan Stok Baru / Pengadaan / Droping Dinkes',
+      petugasId: req.user?.id,
+      petugasNama: req.user?.namaLengkap || req.user?.username || 'Petugas Farmasi'
+    });
+
     res.status(200).json({
       status: 'success',
       message: `Berhasil menambahkan ${qty} ${stokUpdated.obat?.sediaan || 'unit'} untuk ${stokUpdated.obat?.namaObat}.`,
@@ -598,6 +658,27 @@ exports.tambahStokVaksinMasuk = async (req, res) => {
       }
     });
 
+    const stokAkhir = batchUpdated.stok;
+    const stokAwal = stokAkhir - qty;
+
+    await catatMutasiStok(prisma, {
+      faskesId,
+      kategoriItem: 'VAKSIN',
+      vaksinId: batchUpdated.vaksinId,
+      namaItem: batchUpdated.vaksin?.namaVaksin || 'Vaksin',
+      sediaan: 'Dosis / Vial',
+      noBatch: batchUpdated.noBatch,
+      tanggalExpired: batchUpdated.tanggalExpired,
+      jenisMutasi: 'MASUK',
+      jumlahPerubahan: qty,
+      stokAwal,
+      stokAkhir,
+      referensi: req.body.referensi || `VAKSIN-IN-${Date.now().toString().slice(-6)}`,
+      keterangan: req.body.keterangan || 'Penerimaan Vaksin Baru / Droping Cold-Chain Dinkes',
+      petugasId: req.user?.id,
+      petugasNama: req.user?.namaLengkap || req.user?.username || 'Petugas Imunisasi'
+    });
+
     res.status(200).json({
       status: 'success',
       message: `Berhasil mencatat penerimaan ${qty} dosis untuk ${batchUpdated.vaksin?.namaVaksin} (Batch: ${noBatch}).`,
@@ -673,6 +754,28 @@ exports.kurangiStokKeluar = async (req, res) => {
       include: { obat: true }
     });
 
+    const isBmhp = updated.obat?.kategori === 'BMHP';
+    const stokAkhir = updated.stok;
+    const stokAwal = stokAkhir + qty;
+
+    await catatMutasiStok(prisma, {
+      faskesId,
+      kategoriItem: isBmhp ? 'BMHP' : 'OBAT',
+      obatId: updated.obatId,
+      namaItem: updated.obat?.namaObat || 'Item Logistik',
+      sediaan: updated.obat?.sediaan,
+      noBatch: updated.noBatch,
+      tanggalExpired: updated.tanggalExpired,
+      jenisMutasi: 'KELUAR',
+      jumlahPerubahan: -qty,
+      stokAwal,
+      stokAkhir,
+      referensi: req.body.referensi || `OUT-${Date.now().toString().slice(-6)}`,
+      keterangan: alasanKeluar ? `${alasanKeluar}${catatan ? ` - ${catatan}` : ''}` : (catatan || 'Pengeluaran Manual Stok'),
+      petugasId: req.user?.id,
+      petugasNama: req.user?.namaLengkap || req.user?.username || 'Petugas Farmasi'
+    });
+
     res.status(200).json({
       status: 'success',
       message: `Berhasil mengeluarkan ${qty} ${updated.obat?.sediaan || 'unit'} untuk ${updated.obat?.namaObat} (Batch: ${updated.noBatch}). Alasan: ${alasanKeluar || 'Pengeluaran Stok'}. Sisa stok: ${updated.stok}.`,
@@ -737,6 +840,27 @@ exports.kurangiStokVaksinKeluar = async (req, res) => {
       include: { vaksin: true }
     });
 
+    const stokAkhir = updated.stok;
+    const stokAwal = stokAkhir + qty;
+
+    await catatMutasiStok(prisma, {
+      faskesId,
+      kategoriItem: 'VAKSIN',
+      vaksinId: updated.vaksinId,
+      namaItem: updated.vaksin?.namaVaksin || 'Vaksin',
+      sediaan: 'Dosis / Vial',
+      noBatch: updated.noBatch,
+      tanggalExpired: updated.tanggalExpired,
+      jenisMutasi: 'KELUAR',
+      jumlahPerubahan: -qty,
+      stokAwal,
+      stokAkhir,
+      referensi: req.body.referensi || `VAKSIN-OUT-${Date.now().toString().slice(-6)}`,
+      keterangan: alasanKeluar ? `${alasanKeluar}${catatan ? ` - ${catatan}` : ''}` : (catatan || 'Pengeluaran Manual Vaksin / Posyandu'),
+      petugasId: req.user?.id,
+      petugasNama: req.user?.namaLengkap || req.user?.username || 'Petugas Imunisasi'
+    });
+
     res.status(200).json({
       status: 'success',
       message: `Berhasil mengeluarkan ${qty} dosis ${updated.vaksin?.namaVaksin} (Batch: ${noBatch}). Alasan: ${alasanKeluar || 'Pengeluaran Vaksin'}. Sisa dosis: ${updated.stok}.`,
@@ -745,6 +869,153 @@ exports.kurangiStokVaksinKeluar = async (req, res) => {
   } catch (error) {
     console.error('Error in kurangiStokVaksinKeluar:', error);
     res.status(500).json({ status: 'error', message: error.message || 'Gagal memproses pengurangan stok vaksin.' });
+  }
+};
+
+// 10. Ambil Log Riwayat Mutasi Keluar-Masuk (Obat, Vaksin, BMHP)
+exports.getRiwayatMutasiStok = async (req, res) => {
+  try {
+    const faskesId = req.user?.faskesId || req.query.faskesId;
+    if (!faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(req.user?.role)) {
+      return res.status(400).json({ status: 'error', message: 'Faskes ID diperlukan.' });
+    }
+
+    const {
+      kategori,
+      jenisMutasi,
+      search,
+      startDate,
+      endDate,
+      limit = 50,
+      page = 1
+    } = req.query;
+
+    const conditions = [];
+    const params = [];
+    let paramIndex = 1;
+
+    if (faskesId) {
+      conditions.push(`m."faskesId" = $${paramIndex++}`);
+      params.push(faskesId);
+    }
+
+    if (kategori && kategori !== 'semua') {
+      conditions.push(`m."kategoriItem" = $${paramIndex++}`);
+      params.push(kategori.toUpperCase());
+    }
+
+    if (jenisMutasi && jenisMutasi !== 'semua') {
+      conditions.push(`m."jenisMutasi" = $${paramIndex++}`);
+      params.push(jenisMutasi.toUpperCase());
+    }
+
+    if (startDate) {
+      conditions.push(`m."createdAt" >= $${paramIndex++}`);
+      params.push(new Date(startDate));
+    }
+
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      conditions.push(`m."createdAt" <= $${paramIndex++}`);
+      params.push(end);
+    }
+
+    if (search && search.trim()) {
+      const q = `%${search.trim()}%`;
+      conditions.push(`(
+        m."namaItem" ILIKE $${paramIndex} OR 
+        m."noBatch" ILIKE $${paramIndex} OR 
+        m."referensi" ILIKE $${paramIndex} OR 
+        m."keterangan" ILIKE $${paramIndex} OR 
+        m."petugasNama" ILIKE $${paramIndex}
+      )`);
+      params.push(q);
+      paramIndex++;
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const take = parseInt(limit, 10) || 50;
+    const skip = (parseInt(page, 10) - 1) * take;
+
+    const countQuery = `SELECT COUNT(*)::int as total FROM "MutasiStokLogistik" m ${whereClause}`;
+    const countResult = await prisma.$queryRawUnsafe(countQuery, ...params);
+    const total = countResult[0]?.total || 0;
+
+    const itemsQuery = `
+      SELECT m.*, f."namaFaskes", f."kodeFaskes"
+      FROM "MutasiStokLogistik" m
+      LEFT JOIN "Faskes" f ON m."faskesId" = f."id"
+      ${whereClause}
+      ORDER BY m."createdAt" DESC
+      LIMIT ${take} OFFSET ${skip}
+    `;
+    const items = await prisma.$queryRawUnsafe(itemsQuery, ...params);
+
+    // Summary transaksi hari ini
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const summaryQuery = `
+      SELECT "jenisMutasi", "kategoriItem", COUNT(*)::int as count, SUM("jumlahPerubahan")::int as sum_qty
+      FROM "MutasiStokLogistik"
+      WHERE ${faskesId ? ` "faskesId" = $1 AND ` : ''} "createdAt" >= ${faskesId ? '$2' : '$1'}
+      GROUP BY "jenisMutasi", "kategoriItem"
+    `;
+    const summaryParams = faskesId ? [faskesId, todayStart] : [todayStart];
+    const rawSummary = await prisma.$queryRawUnsafe(summaryQuery, ...summaryParams);
+
+    const summaryToday = rawSummary.map(r => ({
+      jenisMutasi: r.jenisMutasi,
+      kategoriItem: r.kategoriItem,
+      _count: { id: r.count },
+      _sum: { jumlahPerubahan: r.sum_qty }
+    }));
+
+    res.status(200).json({
+      status: 'success',
+      data: items,
+      meta: {
+        total,
+        page: parseInt(page, 10),
+        limit: take,
+        totalPages: Math.ceil(total / take)
+      },
+      summaryToday
+    });
+  } catch (error) {
+    console.error('Error in getRiwayatMutasiStok:', error);
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal memuat log mutasi stok.' });
+  }
+};
+
+// 11. Ambil Kartu Stok Spesifik per Item
+exports.getKartuStokItem = async (req, res) => {
+  try {
+    const faskesId = req.user?.faskesId;
+    const { itemId } = req.params;
+    const { jenis = 'OBAT' } = req.query;
+
+    if (!faskesId || !itemId) {
+      return res.status(400).json({ status: 'error', message: 'Faskes ID dan Item ID wajib diisi.' });
+    }
+
+    const isVaksin = jenis.toUpperCase() === 'VAKSIN';
+    const query = `
+      SELECT * FROM "MutasiStokLogistik"
+      WHERE "faskesId" = $1 AND ${isVaksin ? '"vaksinId"' : '"obatId"'} = $2
+      ORDER BY "createdAt" DESC
+      LIMIT 100
+    `;
+
+    const logs = await prisma.$queryRawUnsafe(query, faskesId, itemId);
+
+    res.status(200).json({
+      status: 'success',
+      data: logs
+    });
+  } catch (error) {
+    console.error('Error in getKartuStokItem:', error);
+    res.status(500).json({ status: 'error', message: error.message || 'Gagal memuat kartu stok item.' });
   }
 };
 

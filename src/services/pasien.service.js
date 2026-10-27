@@ -158,11 +158,21 @@ const createPasien = async (data) => {
       }
     }
 
-    // 1. Cari Pasien Lama (jika NIK diisi untuk non-bayi) atau Buat Pasien Baru untuk BAYI
+    // 1. Cari Pasien Lama (berdasarkan ID, NIK, atau No. Rekam Medis) atau Buat Pasien Baru untuk BAYI
     let pasien = null;
-    if (data.nik && !data.isBayi) {
+    if (data.id || data.pasienId) {
+      pasien = await tx.pasien.findUnique({
+        where: { id: data.id || data.pasienId }
+      });
+    }
+    if (!pasien && data.nik && !data.isBayi) {
       pasien = await tx.pasien.findUnique({
         where: { nik: data.nik }
+      });
+    }
+    if (!pasien && data.noRekamMedis) {
+      pasien = await tx.pasien.findFirst({
+        where: { noRM: data.noRekamMedis }
       });
     }
 
@@ -633,25 +643,16 @@ const searchPasien = async (query, user, requestedFaskesId) => {
   const isDinkes = user && ['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role);
   const effectiveFaskesId = isDinkes ? (requestedFaskesId || null) : (user?.faskesId || requestedFaskesId || null);
 
+  // SIKDA Terpadu: Pencarian identitas pasien (NIK / No. RM / Nama) mendukung pencarian lintas faskes
+  // sehingga pasien terdaftar dari faskes lain di wilayah daerah dapat langsung diidentifikasi.
   const where = {
-    AND: [
-      {
-        OR: [
-          { nik: query },
-          { noRM: query }
-        ]
-      }
+    OR: [
+      { nik: query },
+      { noRM: query },
+      { id: query },
+      { namaLengkap: { contains: query, mode: 'insensitive' } }
     ]
   };
-
-  if (effectiveFaskesId) {
-    where.AND.push({
-      OR: [
-        { faskesId: effectiveFaskesId },
-        { kunjungans: { some: { faskesId: effectiveFaskesId } } }
-      ]
-    });
-  }
 
   const pasien = await prisma.pasien.findFirst({
     where,
@@ -687,36 +688,147 @@ const searchPasien = async (query, user, requestedFaskesId) => {
     }
 
     if (pasien.nik) {
-    const booking = await prisma.bookingAntreanOnline.findFirst({
-      where: {
-        nik: pasien.nik,
-        ...(effectiveFaskesId ? { faskesId: effectiveFaskesId } : {}),
-        statusBooking: 'TERKONFIRMASI'
-      },
-      include: {
-        poliklinik: true,
-        dokter: true
-      },
-      orderBy: { createdAt: 'desc' }
-    });
+      const booking = await prisma.bookingAntreanOnline.findFirst({
+        where: {
+          nik: pasien.nik,
+          ...(effectiveFaskesId ? { faskesId: effectiveFaskesId } : {}),
+          statusBooking: 'TERKONFIRMASI'
+        },
+        include: {
+          poliklinik: true,
+          dokter: true
+        },
+        orderBy: { createdAt: 'desc' }
+      });
 
-    if (booking) {
-      pasien.bookingAktif = {
-        id: booking.id,
-        kodeBooking: booking.kodeBooking,
-        poliklinikId: booking.poliklinikId,
-        namaPoli: booking.poliklinik?.namaPoli,
-        dokterId: booking.dokterId,
-        namaDokter: booking.dokter?.namaLengkap,
-        keluhan: booking.keluhan,
-        noAntrian: booking.noAntrian,
-        tanggalKunjungan: booking.tanggalKunjungan
-      };
+      if (booking) {
+        pasien.bookingAktif = {
+          id: booking.id,
+          kodeBooking: booking.kodeBooking,
+          poliklinikId: booking.poliklinikId,
+          namaPoli: booking.poliklinik?.namaPoli,
+          dokterId: booking.dokterId,
+          namaDokter: booking.dokter?.namaLengkap,
+          keluhan: booking.keluhan,
+          noAntrian: booking.noAntrian,
+          tanggalKunjungan: booking.tanggalKunjungan
+        };
+      }
     }
-  }
   }
 
   return pasien;
+};
+
+const getPasienSuggestions = async (query, user, requestedFaskesId, limit = 15) => {
+  if (!query || String(query).trim().length === 0) {
+    return [];
+  }
+  const cleanQuery = String(query).trim();
+  const isDinkes = user && ['DINKES_ADMIN', 'DINKES_MONITORING', 'SUPERADMIN'].includes(user.role);
+  const effectiveFaskesId = isDinkes ? (requestedFaskesId || null) : (user?.faskesId || requestedFaskesId || null);
+
+  // Pencarian look-like master pasien daerah lintas faskes
+  const where = {
+    OR: [
+      { namaLengkap: { contains: cleanQuery, mode: 'insensitive' } },
+      { nik: { contains: cleanQuery } },
+      { noRM: { contains: cleanQuery, mode: 'insensitive' } }
+    ]
+  };
+
+  const pasiens = await prisma.pasien.findMany({
+    where,
+    include: {
+      faskes: {
+        select: {
+          id: true,
+          namaFaskes: true,
+          kodeFaskes: true
+        }
+      },
+      alamat: true,
+      kontak: true,
+      sosial: true,
+      penjamin: true,
+      dataBayi: true,
+      kunjungans: {
+        include: {
+          persetujuan: true
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1
+      }
+    },
+    take: Number(limit) || 15,
+    orderBy: {
+      namaLengkap: 'asc'
+    }
+  });
+
+  const formatted = await Promise.all(pasiens.map(async (pasien) => {
+    let umurTahun = 0;
+    let umurBulan = 0;
+    if (pasien.tanggalLahir) {
+      const birth = new Date(pasien.tanggalLahir);
+      const now = new Date();
+      let diffYears = now.getFullYear() - birth.getFullYear();
+      let diffMonths = now.getMonth() - birth.getMonth();
+      if (now.getDate() < birth.getDate()) {
+        diffMonths--;
+      }
+      if (diffMonths < 0) {
+        diffYears--;
+        diffMonths += 12;
+      }
+      umurTahun = Math.max(0, diffYears);
+      umurBulan = Math.max(0, diffMonths);
+    }
+
+    let bookingAktif = null;
+    if (pasien.nik) {
+      const booking = await prisma.bookingAntreanOnline.findFirst({
+        where: {
+          nik: pasien.nik,
+          ...(effectiveFaskesId ? { faskesId: effectiveFaskesId } : {}),
+          statusBooking: 'TERKONFIRMASI'
+        },
+        include: {
+          poliklinik: true,
+          dokter: true
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+      if (booking) {
+        bookingAktif = {
+          id: booking.id,
+          kodeBooking: booking.kodeBooking,
+          poliklinikId: booking.poliklinikId,
+          namaPoli: booking.poliklinik?.namaPoli,
+          dokterId: booking.dokterId,
+          namaDokter: booking.dokter?.namaLengkap,
+          keluhan: booking.keluhan,
+          noAntrian: booking.noAntrian,
+          tanggalKunjungan: booking.tanggalKunjungan
+        };
+      }
+    }
+
+    const prevConsent = pasien.kunjungans?.find(k => k.persetujuan);
+    const hasPersetujuanSebelumnya = Boolean(prevConsent || pasien.fotoWajah || (pasien.kunjungans && pasien.kunjungans.length > 0));
+
+    return {
+      ...pasien,
+      umurTahun,
+      umurBulan,
+      umurText: `${umurTahun} thn${umurTahun < 5 && umurBulan > 0 ? ` ${umurBulan} bln` : ''}`,
+      bookingAktif,
+      hasPersetujuanSebelumnya,
+      persetujuanSebelumnya: prevConsent?.persetujuan || null
+    };
+  }));
+
+  return formatted;
 };
 
 const updatePasien = async (id, data, user) => {
@@ -782,6 +894,7 @@ module.exports = {
   createPasien,
   getAllPasien,
   searchPasien,
+  getPasienSuggestions,
   updatePasien,
   deletePasien
 };

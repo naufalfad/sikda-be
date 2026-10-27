@@ -1,5 +1,6 @@
 const prisma = require('../config/prisma');
 const kasirService = require('./kasir.service');
+const { catatMutasiStok } = require('../utils/mutasiStok.helper');
 
 const imunisasiService = {
     /**
@@ -92,9 +93,28 @@ const imunisasiService = {
 
             // 3. Kurangi stok vaksin HANYA JIKA disuntik di Puskesmas kita
             if (!isRiwayatLuar) {
-                await tx.batchVaksin.update({
+                const updatedBatch = await tx.batchVaksin.update({
                     where: { id: batchVaksinId },
                     data: { stok: batch.stok - 1 },
+                    include: { vaksin: true }
+                });
+
+                await catatMutasiStok(tx, {
+                    faskesId: batch.faskesId,
+                    kategoriItem: 'VAKSIN',
+                    vaksinId: batch.vaksinId,
+                    namaItem: batch.vaksin?.namaVaksin || updatedBatch.vaksin?.namaVaksin || 'Vaksin Imunisasi',
+                    sediaan: 'Dosis / Vial',
+                    noBatch: batch.noBatch,
+                    tanggalExpired: batch.tanggalExpired,
+                    jenisMutasi: 'KELUAR',
+                    jumlahPerubahan: -1,
+                    stokAwal: batch.stok,
+                    stokAkhir: updatedBatch.stok,
+                    referensi: `IMUNISASI-${kunjunganId ? kunjunganId.slice(-6) : riwayat.id.slice(-6)}`,
+                    keterangan: `Pelayanan Imunisasi Pasien (Dosis ke-${dosisKe || 1})`,
+                    petugasId: petugasId || null,
+                    petugasNama: petugas?.namaLengkap || 'Petugas Imunisasi'
                 });
             }
 

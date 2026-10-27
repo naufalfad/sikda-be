@@ -1,11 +1,15 @@
 const express = require('express');
 const rawatJalanController = require('../controllers/rawatJalan.controller');
 const { protect } = require('../middlewares/auth.middleware');
+const { uploadFotoKlinis } = require('../middlewares/upload.middleware');
 
 const router = express.Router();
 
 // Semua API rawat jalan harus login
 router.use(protect);
+
+// Upload Foto Klinis (SOAP Objektif)
+router.post('/upload-foto-klinis', uploadFotoKlinis.any(), rawatJalanController.uploadFotoKlinis);
 
 // Antrian pasien
 router.get('/antrian', rawatJalanController.getAntrianDokter);

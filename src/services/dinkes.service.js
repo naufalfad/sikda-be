@@ -88,7 +88,18 @@ const getExecutiveSummary = async (query = {}) => {
     trafikKunjungan: {
       hariIni: kunjunganHariIni,
       bulanIni: kunjunganBulanIni,
-      pelayananHariIni: kunjunganByPelayanan.map(p => ({ jenisPelayanan: p.jenisPelayanan, jumlah: p._count.id }))
+      pelayananHariIni: (() => {
+        const summaryMap = new Map();
+        kunjunganByPelayanan.forEach(p => {
+          let label = p.jenisPelayanan || 'Lainnya';
+          if (label === 'UGD' || label === 'IGD' || label === 'Gawat Darurat' || label.toUpperCase().includes('GD')) {
+            label = 'UGD / Gawat Darurat';
+          }
+          const prev = summaryMap.get(label) || 0;
+          summaryMap.set(label, prev + p._count.id);
+        });
+        return Array.from(summaryMap.entries()).map(([jenisPelayanan, jumlah]) => ({ jenisPelayanan, jumlah }));
+      })()
     },
     tenagaMedis: {
       totalNakes,
@@ -155,8 +166,17 @@ const getWorkloadAnalytics = async (query = {}) => {
   const analysis = faskesList.map(faskes => {
     const totalPasien = faskes.kunjungans.length;
     const rawatJalan = faskes.kunjungans.filter(k => k.jenisPelayanan === 'Rawat Jalan' || k.jenisPelayanan === 'RAWAT_JALAN').length;
-    const igd = faskes.kunjungans.filter(k => k.jenisPelayanan === 'IGD').length;
-    const rawatInap = faskes.kunjungans.filter(k => k.jenisPelayanan === 'Rawat Inap' || k.jenisPelayanan === 'RAWAT_INAP').length;
+    const igd = faskes.kunjungans.filter(k => 
+      k.jenisPelayanan === 'UGD' || 
+      k.jenisPelayanan === 'IGD' || 
+      k.jenisPelayanan === 'Gawat Darurat' ||
+      (k.jenisPelayanan && k.jenisPelayanan.toUpperCase().includes('GD'))
+    ).length;
+    const rawatInap = faskes.kunjungans.filter(k => 
+      k.jenisPelayanan === 'Rawat Inap' || 
+      k.jenisPelayanan === 'RAWAT_INAP' ||
+      (k.jenisPelayanan && k.jenisPelayanan.toLowerCase().includes('inap'))
+    ).length;
 
     // Filter dokter
     const dokters = faskes.tenagaMedis.filter(n =>
@@ -1062,6 +1082,48 @@ const getFaskesById = async (id) => {
     }
   }
 
+  // Hitung kunjungan UGD / Gawat Darurat yang ditangani faskes
+  const ugdKunjunganCount = await prisma.kunjungan.count({
+    where: {
+      faskesId: id,
+      OR: [
+        { jenisPelayanan: { in: ['UGD', 'IGD', 'Gawat Darurat'] } },
+        { jenisPelayanan: { contains: 'GD', mode: 'insensitive' } }
+      ]
+    }
+  });
+
+  if (ugdKunjunganCount > 0) {
+    polikliniksList.push({
+      id: 'UGD',
+      namaPoli: 'Unit Gawat Darurat (UGD)',
+      kodePoli: 'UGD',
+      deskripsi: 'Pelayanan triase darurat dan penanganan medis kegawatdaruratan 24 jam.',
+      totalKunjungan: ugdKunjunganCount
+    });
+  }
+
+  // Hitung kunjungan Rawat Inap faskes jika ada
+  const ranapKunjunganCount = await prisma.kunjungan.count({
+    where: {
+      faskesId: id,
+      OR: [
+        { jenisPelayanan: { in: ['Rawat Inap', 'RAWAT_INAP'] } },
+        { jenisPelayanan: { contains: 'inap', mode: 'insensitive' } }
+      ]
+    }
+  });
+
+  if (ranapKunjunganCount > 0) {
+    polikliniksList.push({
+      id: 'RANAP',
+      namaPoli: 'Rawat Inap',
+      kodePoli: 'RANAP',
+      deskripsi: 'Pelayanan observasi dan perawatan medis rawat inap faskes.',
+      totalKunjungan: ranapKunjunganCount
+    });
+  }
+
   polikliniksList.sort((a, b) => b.totalKunjungan - a.totalKunjungan);
 
   const recentKunjungans = await prisma.kunjungan.findMany({
@@ -1105,21 +1167,25 @@ const getFaskesById = async (id) => {
       const diff = now.getFullYear() - birthDate.getFullYear();
       usia = diff >= 0 ? diff : null;
     }
+
+    const isUGD = k.jenisPelayanan === 'UGD' || k.jenisPelayanan === 'IGD' || (k.jenisPelayanan && k.jenisPelayanan.toUpperCase().includes('GD'));
+    const isRanap = k.jenisPelayanan === 'Rawat Inap' || (k.jenisPelayanan && k.jenisPelayanan.toLowerCase().includes('inap'));
+
     return {
       id: k.id,
       noAntrian: k.noAntrian,
       tanggalRegistrasi: k.tanggalRegistrasi || k.createdAt,
       statusKunjungan: k.statusKunjungan,
       jenisPembayaran: k.jenisPembayaran || 'UMUM',
-      prioritasPasien: k.prioritasPasien || 'NORMAL',
+      prioritasPasien: k.prioritasPasien || (isUGD ? 'CITO / GAWAT' : 'NORMAL'),
       pasienId: k.pasien?.id,
       noRM: k.pasien?.noRM,
       namaPasien: k.pasien?.namaLengkap,
       jenisKelamin: k.pasien?.jenisKelamin,
       usia,
-      poliId: k.poliklinik?.id,
-      namaPoli: k.poliklinik?.namaPoli || 'Poli Umum',
-      kodePoli: k.poliklinik?.kodePoli || 'UMUM',
+      poliId: k.poliklinik?.id || (isUGD ? 'UGD' : (isRanap ? 'RANAP' : null)),
+      namaPoli: k.poliklinik?.namaPoli || (isUGD ? 'Unit Gawat Darurat (UGD)' : (isRanap ? 'Rawat Inap' : 'Poli Umum')),
+      kodePoli: k.poliklinik?.kodePoli || (isUGD ? 'UGD' : (isRanap ? 'RANAP' : 'UMUM')),
       namaDokter: k.dokterTujuan?.namaLengkap || 'Belum Ditentukan',
       diagnosis: (() => {
         const uniqueMap = new Map();

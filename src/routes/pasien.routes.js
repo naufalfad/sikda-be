@@ -8,6 +8,7 @@ const router = express.Router();
 router.use(protect);
 
 router.post('/', pasienController.createPasien);
+router.get('/suggestions', pasienController.getPasienSuggestions);
 router.get('/search', pasienController.searchPasien);
 router.get('/', pasienController.getAllPasien);
 router.put('/:id', pasienController.updatePasien);

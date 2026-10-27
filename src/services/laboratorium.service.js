@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const kasirService = require('./kasir.service');
 
 const createOrderLab = async (data) => {
   const { kunjunganId, pasienId, dokterId, catatanKlinis, tests } = data;
@@ -61,6 +62,13 @@ const createOrderLab = async (data) => {
     });
   }
 
+  // Sinkronisasi otomatis ke modul Kasir (Retribusi Perda Pemeriksaan Lab)
+  try {
+    await kasirService.generateTagihan(kunjunganId);
+  } catch (errTagihan) {
+    console.warn('[Kasir Lab] Info sinkronisasi tagihan lab:', errTagihan.message);
+  }
+
   return order;
 };
 
@@ -114,10 +122,15 @@ const simpanHasilLab = async (orderId, details) => {
       include: { details: true }
     });
 
-    await tx.kunjungan.update({
-      where: { id: order.kunjunganId },
-      data: { statusKunjungan: 'DIPERIKSA' }
+    const kunjungan = await tx.kunjungan.findUnique({
+      where: { id: order.kunjunganId }
     });
+    if (kunjungan && kunjungan.statusKunjungan === 'MENUNGGU_LAB') {
+      await tx.kunjungan.update({
+        where: { id: order.kunjunganId },
+        data: { statusKunjungan: 'DIPERIKSA' }
+      });
+    }
 
     return updatedOrder;
   });
@@ -128,10 +141,138 @@ const getOrderByKunjungan = async (kunjunganId) => {
     where: { kunjunganId },
     include: {
       details: true,
-      pasien: true,
-      dokter: true
+      pasien: {
+        include: { alamat: true, kontak: true, penjamin: true }
+      },
+      dokter: { select: { id: true, namaLengkap: true } },
+      kunjungan: {
+        select: {
+          id: true,
+          noAntrian: true,
+          tanggalRegistrasi: true,
+          poliklinik: { select: { namaPoli: true } }
+        }
+      }
     },
     orderBy: { tanggalOrder: 'desc' }
+  });
+};
+
+const getDashboardStats = async (user) => {
+  const whereFaskes = {};
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
+    whereFaskes.kunjungan = { faskesId: user.faskesId };
+  }
+
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+  // 1. Order Hari Ini
+  const totalHariIni = await prisma.orderLaboratorium.count({
+    where: {
+      ...whereFaskes,
+      tanggalOrder: { gte: startOfDay, lte: endOfDay }
+    }
+  });
+
+  const menunggu = await prisma.orderLaboratorium.count({
+    where: {
+      ...whereFaskes,
+      status: 'MENUNGGU_SAMPEL'
+    }
+  });
+
+  const sedangDilayani = await prisma.orderLaboratorium.count({
+    where: {
+      ...whereFaskes,
+      status: 'DIPROSES'
+    }
+  });
+
+  const selesaiHariIni = await prisma.orderLaboratorium.count({
+    where: {
+      ...whereFaskes,
+      status: 'SELESAI',
+      tanggalOrder: { gte: startOfDay, lte: endOfDay }
+    }
+  });
+
+  // 2. Data 7 Hari Terakhir
+  const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+  const chartData = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0);
+    const dayEnd = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+
+    const count = await prisma.orderLaboratorium.count({
+      where: {
+        ...whereFaskes,
+        tanggalOrder: { gte: dayStart, lte: dayEnd }
+      }
+    });
+
+    chartData.push({
+      day: days[d.getDay()],
+      date: d.toISOString().split('T')[0],
+      count
+    });
+  }
+
+  // 3. Pemeriksaan Selesai Terakhir (5 teratas)
+  const selesaiTerakhir = await prisma.orderLaboratorium.findMany({
+    where: {
+      ...whereFaskes,
+      status: 'SELESAI'
+    },
+    include: {
+      pasien: { select: { id: true, namaLengkap: true, noRM: true } },
+      dokter: { select: { id: true, namaLengkap: true } },
+      details: true
+    },
+    orderBy: { tanggalOrder: 'desc' },
+    take: 5
+  });
+
+  return {
+    stats: {
+      totalHariIni,
+      menunggu,
+      sedangDilayani,
+      selesai: selesaiHariIni
+    },
+    chartData,
+    selesaiTerakhir
+  };
+};
+
+const getRiwayatLabByPasien = async (pasienId) => {
+  if (!pasienId) return [];
+  return await prisma.orderLaboratorium.findMany({
+    where: {
+      pasienId,
+      status: 'SELESAI'
+    },
+    include: {
+      details: true,
+      pasien: {
+        include: { alamat: true, kontak: true, penjamin: true }
+      },
+      dokter: { select: { id: true, namaLengkap: true } },
+      kunjungan: { 
+        select: { 
+          id: true, 
+          noAntrian: true, 
+          tanggalRegistrasi: true, 
+          poliklinik: { select: { namaPoli: true } } 
+        } 
+      }
+    },
+    orderBy: {
+      tanggalOrder: 'desc'
+    }
   });
 };
 
@@ -139,5 +280,7 @@ module.exports = {
   createOrderLab,
   getAntrianLab,
   simpanHasilLab,
-  getOrderByKunjungan
+  getOrderByKunjungan,
+  getDashboardStats,
+  getRiwayatLabByPasien
 };

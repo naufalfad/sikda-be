@@ -48,6 +48,19 @@ const searchPasien = async (req, res, next) => {
   }
 };
 
+const getPasienSuggestions = async (req, res, next) => {
+  try {
+    const { query, limit } = req.query;
+    const data = await pasienService.getPasienSuggestions(query, req.user, req.query.faskesId, limit);
+    res.status(200).json({
+      success: true,
+      data: data || []
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const updatePasien = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -80,6 +93,7 @@ module.exports = {
   createPasien,
   getAllPasien,
   searchPasien,
+  getPasienSuggestions,
   updatePasien,
   deletePasien
 };

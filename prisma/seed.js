@@ -96,7 +96,7 @@ async function main() {
   const refJenisPelayanans = [
     { kode: 'RAWAT_JALAN', label: 'Rawat Jalan' },
     { kode: 'RAWAT_INAP', label: 'Rawat Inap' },
-    { kode: 'IGD', label: 'Instalasi Gawat Darurat (IGD)' },
+    { kode: 'UGD', label: 'Unit Gawat Darurat (UGD)' },
     { kode: 'UKM', label: 'Usaha Kesehatan Masyarakat (UKM)' },
   ];
   for (const item of refJenisPelayanans) {
@@ -666,7 +666,7 @@ async function main() {
     { kodeRuangan: 'R-POLI-UMUM-CBN', namaRuangan: 'Ruang Pemeriksaan Umum (Poli 1)', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'RAWAT_JALAN' },
     { kodeRuangan: 'R-POLI-GIGI-CBN', namaRuangan: 'Ruang Pelayanan Gigi & Mulut', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'RAWAT_JALAN' },
     { kodeRuangan: 'R-POLI-KIA-CBN', namaRuangan: 'Ruang KIA, KB & Imunisasi', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'RAWAT_JALAN' },
-    { kodeRuangan: 'R-IGD-CBN', namaRuangan: 'Ruang Tindakan & Gawat Darurat (IGD)', lantai: 'Lantai 1', gedung: 'Gedung IGD', kategoriRuangan: 'IGD' },
+    { kodeRuangan: 'R-UGD-CBN', namaRuangan: 'Ruang Tindakan & Gawat Darurat (UGD)', lantai: 'Lantai 1', gedung: 'Gedung UGD', kategoriRuangan: 'UGD' },
     { kodeRuangan: 'R-LAB-CBN', namaRuangan: 'Ruang Laboratorium Sederhana', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'PENUNJANG_MEDIS' },
     { kodeRuangan: 'R-FARMASI-CBN', namaRuangan: 'Ruang Depo Farmasi & Vaksin', lantai: 'Lantai 1', gedung: 'Gedung Utama', kategoriRuangan: 'GUDANG' },
     { kodeRuangan: 'R-INAP-CBN-01', namaRuangan: 'Ruang Rawat Inap Mawar', lantai: 'Lantai 2', gedung: 'Gedung B', kategoriRuangan: 'RAWAT_INAP' }
@@ -682,11 +682,12 @@ async function main() {
     cbnRooms[r.kodeRuangan] = created;
   }
 
+  // Tempat Tidur Rawat Inap Cibinong (6 Bed)
   for (let i = 1; i <= 6; i++) {
     const bedNo = `BED-MWR-0${i}`;
     await prisma.tempatTidur.upsert({
       where: { ruanganId_nomorBed: { ruanganId: cbnRooms['R-INAP-CBN-01'].id, nomorBed: bedNo } },
-      update: { statusBed: i <= 4 ? 'TERISI' : 'TERSEDIA' },
+      update: { statusBed: i <= 4 ? 'TERISI' : 'TERSEDIA', kelasKamar: 'KELAS_3' },
       create: {
         ruanganId: cbnRooms['R-INAP-CBN-01'].id,
         nomorBed: bedNo,
@@ -696,29 +697,44 @@ async function main() {
     });
   }
 
-  // Sukamakmur: Ruang Tindakan IGD (2 Bed)
-  const rIgdSukamakmur = await prisma.masterRuangan.upsert({
-    where: { kodeRuangan: 'R-IGD-SKM-01' },
-    update: { faskesId: faskesSukamakmur.id },
+  // Tempat Tidur Tindakan UGD Cibinong (3 Bed)
+  for (let i = 1; i <= 3; i++) {
+    const bedNo = `BED-UGD-0${i}`;
+    await prisma.tempatTidur.upsert({
+      where: { ruanganId_nomorBed: { ruanganId: cbnRooms['R-UGD-CBN'].id, nomorBed: bedNo } },
+      update: { kelasKamar: 'NON_KELAS_UGD', statusBed: 'TERSEDIA' },
+      create: {
+        ruanganId: cbnRooms['R-UGD-CBN'].id,
+        nomorBed: bedNo,
+        kelasKamar: 'NON_KELAS_UGD',
+        statusBed: 'TERSEDIA'
+      }
+    });
+  }
+
+  // Sukamakmur: Ruang Tindakan UGD (2 Bed)
+  const rUgdSukamakmur = await prisma.masterRuangan.upsert({
+    where: { kodeRuangan: 'R-UGD-SKM-01' },
+    update: { faskesId: faskesSukamakmur.id, namaRuangan: 'Ruang Tindakan Unit Gawat Darurat (UGD)', kategoriRuangan: 'UGD' },
     create: {
-      kodeRuangan: 'R-IGD-SKM-01',
-      namaRuangan: 'Ruang Tindakan Gawat Darurat',
+      kodeRuangan: 'R-UGD-SKM-01',
+      namaRuangan: 'Ruang Tindakan Unit Gawat Darurat (UGD)',
       lantai: 'Lantai 1',
       gedung: 'Gedung Utama',
-      kategoriRuangan: 'IGD',
+      kategoriRuangan: 'UGD',
       faskesId: faskesSukamakmur.id
     }
   });
 
   for (let i = 1; i <= 2; i++) {
-    const bedNo = `BED-IGD-0${i}`;
+    const bedNo = `BED-UGD-0${i}`;
     await prisma.tempatTidur.upsert({
-      where: { ruanganId_nomorBed: { ruanganId: rIgdSukamakmur.id, nomorBed: bedNo } },
-      update: {},
+      where: { ruanganId_nomorBed: { ruanganId: rUgdSukamakmur.id, nomorBed: bedNo } },
+      update: { kelasKamar: 'NON_KELAS_UGD', statusBed: 'TERSEDIA' },
       create: {
-        ruanganId: rIgdSukamakmur.id,
+        ruanganId: rUgdSukamakmur.id,
         nomorBed: bedNo,
-        kelasKamar: 'NON_KELAS_IGD',
+        kelasKamar: 'NON_KELAS_UGD',
         statusBed: 'TERSEDIA'
       }
     });
@@ -730,9 +746,9 @@ async function main() {
     { kodeAset: 'AST-CBN-DNT-01', namaAset: 'Dental Chair Unit Terintegrasi', ruanganId: cbnRooms['R-POLI-GIGI-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Gnatus', tipeModel: 'G2 Sync', nomorSeri: 'GNT-2023-011', tahunPerolehan: 2022, sumberAnggaran: 'APBD', hargaPerolehan: 85000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-DNT-01' },
     { kodeAset: 'AST-CBN-STRL-01', namaAset: 'Autoclave Sterilisator Medis 23L', ruanganId: cbnRooms['R-POLI-GIGI-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Tuttnauer', tipeModel: '2340M', nomorSeri: 'TTN-5512', tahunPerolehan: 2022, sumberAnggaran: 'BOK', hargaPerolehan: 32000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-STRL-01' },
     { kodeAset: 'AST-CBN-DOP-01', namaAset: 'Doppler Fetal Heart Rate Kebidanan', ruanganId: cbnRooms['R-POLI-KIA-CBN'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Bistos', tipeModel: 'BT-200', nomorSeri: 'BST-2024-88', tahunPerolehan: 2024, sumberAnggaran: 'BOK', hargaPerolehan: 4500000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-DOP-01' },
-    { kodeAset: 'AST-CBN-EKG-01', namaAset: 'Elektrokardiograf (EKG) 12 Saluran', ruanganId: cbnRooms['R-IGD-CBN'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Bionet', tipeModel: 'CardioCare 2000', nomorSeri: 'BION-4411', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 24000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-EKG-01' },
-    { kodeAset: 'AST-CBN-AED-01', namaAset: 'Defibrillator Emergency AED', ruanganId: cbnRooms['R-IGD-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Philips', tipeModel: 'HeartStart FRx', nomorSeri: 'PHL-AED-092', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 45000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-AED-01' },
-    { kodeAset: 'AST-CBN-SUCT-01', namaAset: 'Suction Pump Portable Resusitasi', ruanganId: cbnRooms['R-IGD-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Thomas', tipeModel: 'Medi-Pump 1632', nomorSeri: 'THM-SUC-891', tahunPerolehan: 2022, sumberAnggaran: 'BLUD', hargaPerolehan: 8500000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-SUC-01' },
+    { kodeAset: 'AST-CBN-EKG-01', namaAset: 'Elektrokardiograf (EKG) 12 Saluran', ruanganId: cbnRooms['R-UGD-CBN'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Bionet', tipeModel: 'CardioCare 2000', nomorSeri: 'BION-4411', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 24000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-EKG-01' },
+    { kodeAset: 'AST-CBN-AED-01', namaAset: 'Defibrillator Emergency AED', ruanganId: cbnRooms['R-UGD-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Philips', tipeModel: 'HeartStart FRx', nomorSeri: 'PHL-AED-092', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 45000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-AED-01' },
+    { kodeAset: 'AST-CBN-SUCT-01', namaAset: 'Suction Pump Portable Resusitasi', ruanganId: cbnRooms['R-UGD-CBN'].id, kategoriAset: 'MEDIS_TERAPETIK', merk: 'Thomas', tipeModel: 'Medi-Pump 1632', nomorSeri: 'THM-SUC-891', tahunPerolehan: 2022, sumberAnggaran: 'BLUD', hargaPerolehan: 8500000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-SUC-01' },
     { kodeAset: 'AST-CBN-USG-01', namaAset: 'USG Mindray DC-30', ruanganId: cbnRooms['R-INAP-CBN-01'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Mindray', tipeModel: 'DC-30 Exp', nomorSeri: 'MND-USG-772', tahunPerolehan: 2023, sumberAnggaran: 'APBD', hargaPerolehan: 180000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ASPAK-USG-001' },
     { kodeAset: 'AST-CBN-CENT-01', namaAset: 'Centrifuge Laboratorium Klinik', ruanganId: cbnRooms['R-LAB-CBN'].id, kategoriAset: 'MEDIS_LABORATORIUM', merk: 'Gemmy', tipeModel: 'PLC-03', nomorSeri: 'GMY-CENT-102', tahunPerolehan: 2022, sumberAnggaran: 'BLUD', hargaPerolehan: 7500000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-CENT-01' },
     { kodeAset: 'AST-CBN-KULK-01', namaAset: 'Kulkas Vaksin TCW 3000 (Cold-Chain)', ruanganId: cbnRooms['R-FARMASI-CBN'].id, kategoriAset: 'MEDIS_DIAGNOSTIK', merk: 'Dometic', tipeModel: 'TCW 3000 AC', nomorSeri: 'DOM-TCW-2022', tahunPerolehan: 2022, sumberAnggaran: 'APBD', hargaPerolehan: 65000000, kondisiAset: 'BAIK', statusOperasional: 'AKTIF_DIGUNAKAN', kodeAspak: 'ALKES-KULK-01' }
@@ -751,11 +767,11 @@ async function main() {
   // Aset Sukamakmur
   const astSkm = await prisma.asetRuangan.upsert({
     where: { kodeAset: 'AST-SKM-TNS-01' },
-    update: { faskesId: faskesSukamakmur.id },
+    update: { faskesId: faskesSukamakmur.id, ruanganId: rUgdSukamakmur.id },
     create: {
       kodeAset: 'AST-SKM-TNS-01',
       namaAset: 'Tensimeter Digital Omron',
-      ruanganId: rIgdSukamakmur.id,
+      ruanganId: rUgdSukamakmur.id,
       faskesId: faskesSukamakmur.id,
       kategoriAset: 'MEDIS_DIAGNOSTIK',
       kondisiAset: 'RUSAK_RINGAN',

@@ -105,6 +105,32 @@ const getDokterDashboardStats = async (req, res, next) => {
   }
 };
 
+const getDokterKinerjaHarian = async (req, res, next) => {
+  try {
+    const { tanggal, dokterId } = req.query;
+    const data = await kunjunganService.getDokterKinerjaHarian(req.user, { tanggal, dokterId });
+    res.status(200).json({
+      success: true,
+      data: data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const getAdminMonitoringDokter = async (req, res, next) => {
+  try {
+    const { tanggal, poliklinikId } = req.query;
+    const data = await kunjunganService.getAdminMonitoringDokter(req.user, { tanggal, poliklinikId });
+    res.status(200).json({
+      success: true,
+      data: data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getKunjunganFhirPreview = async (req, res, next) => {
   try {
     const { id } = req.params;
@@ -123,5 +149,7 @@ module.exports = {
   getDashboardStats,
   getPerawatDashboardStats,
   getDokterDashboardStats,
+  getDokterKinerjaHarian,
+  getAdminMonitoringDokter,
   getKunjunganFhirPreview,
 };

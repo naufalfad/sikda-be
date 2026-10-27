@@ -1,6 +1,56 @@
 const prisma = require('../config/prisma');
 const kasirService = require('./kasir.service');
 
+/**
+ * Helper untuk men-generate Nomor Rekam Medis (No. RM) resmi faskes
+ * Menggantikan nomor darurat sementara RM-EMG- saat administrasi diverifikasi di loket
+ */
+const generateOfficialNoRM = async (tx, faskesId) => {
+  let prefix = 'RM-2026';
+  if (faskesId) {
+    const faskes = await tx.faskes.findUnique({ where: { id: faskesId } });
+    if (faskes?.namaFaskes) {
+      if (faskes.namaFaskes.toLowerCase().includes('cibinong')) prefix = 'RM-CBN';
+      else if (faskes.namaFaskes.toLowerCase().includes('sukamakmur')) prefix = 'RM-SKM';
+      else if (faskes.kodeFaskes) prefix = `RM-${faskes.kodeFaskes.slice(-3).toUpperCase()}`;
+    }
+  }
+
+  const latestPasien = await tx.pasien.findFirst({
+    where: {
+      noRM: { startsWith: `${prefix}-` }
+    },
+    orderBy: {
+      noRM: 'desc'
+    }
+  });
+
+  let nextNum = 1;
+  if (latestPasien?.noRM) {
+    const parts = latestPasien.noRM.split('-');
+    const numPart = parseInt(parts[parts.length - 1], 10);
+    if (!isNaN(numPart)) {
+      nextNum = numPart + 1;
+    }
+  }
+
+  let candidate = `${prefix}-${nextNum.toString().padStart(5, '0')}`;
+  let attempts = 0;
+  while (attempts < 10) {
+    const exists = await tx.pasien.findUnique({ where: { noRM: candidate } });
+    if (!exists) break;
+    nextNum++;
+    candidate = `${prefix}-${nextNum.toString().padStart(5, '0')}`;
+    attempts++;
+  }
+
+  if (attempts >= 10) {
+    candidate = `${prefix}-${Math.floor(10000 + Math.random() * 90000)}`;
+  }
+
+  return candidate;
+};
+
 const ugdService = {
   /**
    * Mengambil daftar seluruh Tempat Tidur UGD / IGD di Faskes
@@ -8,7 +58,7 @@ const ugdService = {
   getBedsUGD: async (faskesId = null) => {
     const where = {
       ruangan: {
-        kategoriRuangan: 'IGD',
+        kategoriRuangan: { in: ['UGD', 'IGD'] },
         ...(faskesId ? { faskesId } : {})
       }
     };
@@ -461,11 +511,21 @@ const ugdService = {
         const oldPasienId = kunjungan.pasienId;
         await tx.kunjungan.update({
           where: { id: kunjunganId },
-          data: { pasienId: effectiveExistingId }
+          data: {
+            pasienId: effectiveExistingId,
+            statusAdministrasi: 'LENGKAP',
+            isAnonim: false,
+            namaAnonim: null
+          }
         });
 
         // Update juga screening dan rekam medis yang mungkin sudah dibuat di kunjungan ini agar menunjuk pasien terpilih
         await tx.screening.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.rekamMedis.updateMany({
           where: { kunjunganId },
           data: { pasienId: effectiveExistingId }
         });
@@ -480,10 +540,21 @@ const ugdService = {
           }
         } catch (_) {}
       } else {
-        // Skenario B: Update data pasien anonim saat ini menjadi identitas lengkap
+        // Skenario B: Update data pasien anonim saat ini menjadi identitas lengkap (Pasien Baru Resmi)
+        const currentPasien = await tx.pasien.findUnique({ where: { id: finalPasienId } });
+        const targetFaskesId = kunjungan.faskesId || user.faskesId || currentPasien?.faskesId;
+
+        // Generate nomor RM resmi jika masih menggunakan nomor RM darurat sementara (RM-EMG-)
+        let officialNoRM = payload.noRM || payload.noRekamMedis;
+        if (!officialNoRM && (!currentPasien?.noRM || currentPasien.noRM.startsWith('RM-EMG-'))) {
+          officialNoRM = await generateOfficialNoRM(tx, targetFaskesId);
+        }
+
         await tx.pasien.update({
           where: { id: finalPasienId },
           data: {
+            ...(officialNoRM ? { noRM: officialNoRM } : {}),
+            ...(targetFaskesId && !currentPasien?.faskesId ? { faskesId: targetFaskesId } : {}),
             ...(nik ? { nik } : {}),
             ...(namaLengkap ? { namaLengkap } : {}),
             ...(tempatLahir ? { tempatLahir } : {}),
@@ -558,10 +629,11 @@ const ugdService = {
           pasienId: finalPasienId,
           statusAdministrasi: 'LENGKAP',
           isAnonim: false,
+          namaAnonim: null,
           userPendaftarId: user.id
         },
         include: {
-          pasien: { include: { penjamin: true } },
+          pasien: { include: { penjamin: true, alamat: true, kontak: true } },
           tempatTidurs: { include: { ruangan: true } }
         }
       });

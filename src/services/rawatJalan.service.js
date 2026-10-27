@@ -339,24 +339,60 @@ const getRiwayatPasienByRM = async (noRM, user) => {
     }
   }
 
-  // Tentukan filter kunjungan pasien (terisolasi per Faskes):
+  // Interoperabilitas Rekam Medis Lintas Faskes (Continuity of Care):
+  // Dokter dan tenaga medis yang sah (memiliki Active Therapeutic Relationship)
+  // berhak mengakses riwayat klinis lengkap pasien, baik dari faskes saat ini maupun faskes lain
+  // dalam jaringan SIKDA daerah (misal kunjungan sebelumnya di Puskesmas Cibinong dapat dibaca oleh dokter di Sukamakmur).
   const kunjungansWhere = {
-    statusKunjungan: {
-      in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR', 'RAWAT_INAP', 'DIPERIKSA', 'MENUNGGU_DOKTER'],
-    },
+    OR: [
+      // Kunjungan di Faskes saat ini:
+      ...(user?.faskesId ? [{
+        faskesId: user.faskesId,
+        statusKunjungan: {
+          in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR', 'RAWAT_INAP', 'DIPERIKSA', 'MENUNGGU_DOKTER'],
+        }
+      }] : [{
+        statusKunjungan: {
+          in: ['SELESAI', 'MENUNGGU_FARMASI', 'PULANG', 'MENUNGGU_KASIR', 'RAWAT_INAP', 'DIPERIKSA', 'MENUNGGU_DOKTER'],
+        }
+      }]),
+      // Riwayat Kunjungan dari Faskes Lain (yang telah selesai / memiliki riwayat klinis historis):
+      ...(user?.faskesId ? [{
+        faskesId: { not: user.faskesId },
+        statusKunjungan: {
+          in: ['SELESAI', 'PULANG', 'MENUNGGU_FARMASI', 'MENUNGGU_KASIR', 'RAWAT_INAP'],
+        }
+      }] : [])
+    ]
   };
-
-  // Batasi kunjungan sesuai Faskes pengguna (multi-tenant isolation)
-  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
-    kunjungansWhere.faskesId = user.faskesId;
-  }
 
   const detailPasien = await prisma.pasien.findUnique({
     where: { noRM },
     include: {
+      faskes: {
+        select: { id: true, namaFaskes: true, kodeFaskes: true }
+      },
       alamat: true,
       kontak: true,
       penjamin: true,
+      orderLabs: {
+        include: {
+          details: true,
+          dokter: { select: { id: true, namaLengkap: true } },
+          pasien: {
+            include: { alamat: true, kontak: true, penjamin: true }
+          },
+          kunjungan: {
+            select: {
+              id: true,
+              tanggalRegistrasi: true,
+              poliklinik: { select: { namaPoli: true } },
+              faskes: { select: { id: true, namaFaskes: true, kodeFaskes: true } }
+            }
+          }
+        },
+        orderBy: { tanggalOrder: 'desc' }
+      },
       kunjungans: {
         where: kunjungansWhere,
         orderBy: [
@@ -364,6 +400,9 @@ const getRiwayatPasienByRM = async (noRM, user) => {
           { jamRegistrasi: 'desc' },
         ],
         include: {
+          faskes: {
+            select: { id: true, namaFaskes: true, kodeFaskes: true }
+          },
           poliklinik: true,
           dokterTujuan: {
             select: { id: true, namaLengkap: true },
@@ -384,7 +423,13 @@ const getRiwayatPasienByRM = async (noRM, user) => {
             }
           },
           orderLab: {
-            include: { details: true }
+            include: {
+              details: true,
+              dokter: { select: { id: true, namaLengkap: true } },
+              pasien: {
+                include: { alamat: true, kontak: true, penjamin: true }
+              }
+            }
           },
           orderRadiologi: {
             include: { details: true }
@@ -505,6 +550,7 @@ const simpanSOAP = async (rekamMedisId, data) => {
       odontogram: data.odontogram ?? undefined,
       dmft: data.dmft ?? undefined,
       oralFindings: data.oralFindings ?? undefined,
+      fotoObjektif: data.fotoObjektif ?? undefined,
 
       // A - Asesmen
       diagnosisKlinis: data.diagnosisKlinis ?? undefined,
@@ -686,6 +732,7 @@ const selesaikanPemeriksaan = async (kunjunganId, user) => {
       where: { id: kunjunganId },
       data: {
         statusKunjungan: targetStatus,
+        waktuPemeriksaanSelesai: new Date(),
         satusehat_sync_status: 'PENDING',
       },
     });
@@ -1197,10 +1244,15 @@ const pulang = async (kunjunganId) => {
       data: {
         statusKunjungan: targetStatus,
         statusPulang: 'PULANG_SEMBUH',
-        caraKeluar: 'PERSATUAN_DOKTER',
+        caraKeluar: 'PERSETUJUAN_DOKTER',
         kondisiDischarge: 'SEMBUH',
         waktuDischarge: new Date(),
       },
+    });
+
+    await tx.rekamMedis.updateMany({
+      where: { kunjunganId },
+      data: { statusPemeriksaan: 'SELESAI' },
     });
 
     return updated;
@@ -1269,14 +1321,15 @@ const catatMeninggal = async (kunjunganId, dokterId, catatan) => {
 
 /**
  * Pulangkan Pasien Rawat Inap (Discharge Rawat Inap)
- * Menghitung hari rawat inap, membebaskan tempat tidur, dan menghasilkan tagihan akomodasi kasir
+ * Menghitung hari rawat inap, membebaskan tempat tidur, membuat e-resep obat pulang, dan menghasilkan tagihan kumulatif kasir
  */
-const dischargeRawatInap = async (kunjunganId, dataDischarge = {}) => {
+const dischargeRawatInap = async (kunjunganId, dataDischarge = {}, user = null) => {
   const kunjungan = await prisma.kunjungan.findUnique({
     where: { id: kunjunganId },
     include: {
       pasien: true,
       rekamMedis: true,
+      dokterTujuan: true,
       tempatTidurs: {
         include: { ruangan: true },
       },
@@ -1284,13 +1337,49 @@ const dischargeRawatInap = async (kunjunganId, dataDischarge = {}) => {
   });
   if (!kunjungan) throw new Error('Kunjungan tidak ditemukan');
 
-  const existingResep = await prisma.resep.findFirst({
-    where: { kunjunganId, status: 'MENUNGGU_FARMASI' },
-  });
-  const targetStatus = existingResep ? 'MENUNGGU_FARMASI' : 'MENUNGGU_KASIR';
+  // Tangkap informasi bed yang sedang ditempati sebelum dibebaskan
+  const bedAktif = (kunjungan.tempatTidurs && kunjungan.tempatTidurs.length > 0)
+    ? kunjungan.tempatTidurs[0]
+    : await prisma.tempatTidur.findFirst({
+        where: { kunjunganAktifId: kunjunganId },
+        include: { ruangan: true },
+      });
 
   const result = await prisma.$transaction(async (tx) => {
-    // 1. Bebaskan seluruh Bed Rawat Inap yang ditempati pasien
+    // 1. Simpan Resep Obat Pulang (Take-Home Medication) jika dokter meresepkan
+    if (Array.isArray(dataDischarge.resepPulang) && dataDischarge.resepPulang.length > 0) {
+      const dokterId = user?.id || kunjungan.dokterTujuanId || user?.id;
+      const penginputId = user?.role === 'PERAWAT' ? user?.id : null;
+
+      const resepPulang = await tx.resep.create({
+        data: {
+          kunjunganId,
+          pasienId: kunjungan.pasienId,
+          dokterId: dokterId || kunjungan.pasienId,
+          penginputId,
+          status: 'MENUNGGU_FARMASI',
+        },
+      });
+
+      const details = [];
+      for (const r of dataDischarge.resepPulang) {
+        if (!r || !r.obatId) continue;
+        details.push({
+          resepId: resepPulang.id,
+          obatId: r.obatId,
+          jumlah: parseInt(r.qty || r.jumlah, 10) || 1,
+          aturanPakai: r.signa || r.aturanPakai || '3 x 1 Sehari',
+          catatan: `[Obat Pulang] ${r.catatan || ''}`.trim(),
+          noBatch: r.noBatch || null,
+        });
+      }
+
+      if (details.length > 0) {
+        await tx.resepDetail.createMany({ data: details });
+      }
+    }
+
+    // 2. Bebaskan seluruh Bed Rawat Inap yang ditempati pasien
     await tx.tempatTidur.updateMany({
       where: { kunjunganAktifId: kunjunganId },
       data: {
@@ -1300,7 +1389,7 @@ const dischargeRawatInap = async (kunjunganId, dataDischarge = {}) => {
       },
     });
 
-    // 2. Update status Kunjungan ke Discharge (Siap Bayar di Kasir)
+    // 3. Update status Kunjungan ke MENUNGGU_KASIR agar pasien langsung muncul di loket pembayaran Kasir
     const statusPulangFinal = dataDischarge.caraKeluar === 'RUJUK'
       ? 'DIRUJUK_RS'
       : (dataDischarge.caraKeluar === 'MENINGGAL' ? 'MENINGGAL' : 'PULANG_SEMBUH');
@@ -1308,21 +1397,22 @@ const dischargeRawatInap = async (kunjunganId, dataDischarge = {}) => {
     const updatedKunjungan = await tx.kunjungan.update({
       where: { id: kunjunganId },
       data: {
-        statusKunjungan: targetStatus,
+        statusKunjungan: 'MENUNGGU_KASIR',
         statusPulang: statusPulangFinal,
         caraKeluar: dataDischarge.caraKeluar || 'PERSATUAN_DOKTER',
         kondisiDischarge: dataDischarge.kondisiDischarge || (dataDischarge.caraKeluar === 'RUJUK' ? 'BELUM_SEMBUH' : 'SEMBUH'),
         waktuDischarge: new Date(),
+        waktuMasukRawatInap: kunjungan.waktuMasukRawatInap || kunjungan.tanggalRegistrasi || new Date(),
       },
     });
 
-    // 2b. Catat Rujukan Keluar jika pasien dirujuk ke RS / Faskes lain
+    // 4. Catat Rujukan Keluar jika pasien dirujuk ke RS / Faskes lain
     if (dataDischarge.caraKeluar === 'RUJUK' && dataDischarge.faskesTujuan) {
       await tx.rujukanKeluar.create({
         data: {
           kunjunganId,
           pasienId: kunjungan.pasienId,
-          dokterId: kunjungan.dokterTujuanId,
+          dokterId: kunjungan.dokterTujuanId || user?.id,
           faskesTujuan: dataDischarge.faskesTujuan,
           poliTujuan: dataDischarge.poliTujuan || 'Spesialis Rujukan',
           dokterTujuan: dataDischarge.dokterTujuan || null,
@@ -1331,7 +1421,7 @@ const dischargeRawatInap = async (kunjunganId, dataDischarge = {}) => {
       });
     }
 
-    // 3. Catat edukasi pulang & rencana kontrol di rekam medis jika ada
+    // 5. Catat edukasi pulang & rencana kontrol di rekam medis jika ada
     if (kunjungan.rekamMedis && (dataDischarge.edukasiPulang || dataDischarge.rencanaKontrol)) {
       const existingInstruksi = kunjungan.rekamMedis.instruksiMedis || '';
       const notes = [
@@ -1349,15 +1439,15 @@ const dischargeRawatInap = async (kunjunganId, dataDischarge = {}) => {
     return updatedKunjungan;
   });
 
-  // 4. Generate Tagihan Kasir Final (Termasuk Biaya Tempat Tidur x Jumlah Hari Menginap)
+  // 6. Generate Tagihan Kasir Final Kumulatif (Karcis Rawat Jalan + Tindakan + Tempat Tidur + Terapi Inap + Resep Pulang)
   let tagihanFinal = null;
   try {
-    tagihanFinal = await kasirService.generateTagihan(kunjunganId);
+    tagihanFinal = await kasirService.generateTagihan(kunjunganId, { bedInfo: bedAktif });
   } catch (errTagihan) {
     console.error(`[Kasir Error] Gagal generate tagihan rawat inap:`, errTagihan.message);
   }
 
-  // 5. SATUSEHAT Sync
+  // 7. SATUSEHAT Sync
   try {
     sendBundleForKunjungan(kunjunganId);
   } catch (errSS) {
