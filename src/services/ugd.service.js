@@ -87,9 +87,23 @@ const ugdService = {
   getAntreanUGD: async (faskesId = null, user = null, queryParams = {}) => {
     const where = {
       jenisPelayanan: { in: ['UGD', 'IGD', 'Gawat Darurat'] },
-      statusKunjungan: { notIn: ['SELESAI', 'BATAL', 'PULANG'] },
       ...(faskesId ? { faskesId } : {})
     };
+
+    if (queryParams.tab === 'selesai') {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      where.statusKunjungan = {
+        in: ['SELESAI', 'PULANG', 'MENUNGGU_KASIR', 'MENUNGGU_FARMASI', 'RAWAT_INAP', 'DIRUJUK']
+      };
+      where.tanggalRegistrasi = { gte: today };
+    } else {
+      // Default antrean aktif UGD: Hanya pasien yang sedang dalam proses penanganan UGD
+      // Pasien RAWAT_INAP, DIRUJUK, MENUNGGU_KASIR, MENUNGGU_FARMASI, PULANG, SELESAI, BATAL otomatis dikeluarkan dari antrean aktif UGD
+      where.statusKunjungan = {
+        in: ['MENUNGGU_DOKTER', 'DIPERIKSA', 'OBSERVASI', 'MENUNGGU_LAB', 'MENUNGGU_RADIOLOGI', 'ANTRI_POLI']
+      };
+    }
 
     if (queryParams.filter === 'my' && user?.id) {
       where.dokterTujuanId = user.id;
@@ -449,6 +463,11 @@ const ugdService = {
       });
     }
 
+    if (user && user.id) {
+      const { autoCheckInPerawatIfMissing } = require('../utils/fee.helper');
+      autoCheckInPerawatIfMissing(user.id, kunjungan.faskesId, new Date()).catch(err => console.warn(err));
+    }
+
     return await prisma.kunjungan.findUnique({
       where: { id: kunjunganId },
       include: {
@@ -519,7 +538,8 @@ const ugdService = {
           }
         });
 
-        // Update juga screening dan rekam medis yang mungkin sudah dibuat di kunjungan ini agar menunjuk pasien terpilih
+        // 1. Pindahkan seluruh data klinis, rekam medis, dan transaksi keuangan kunjungan ini
+        // dari pasien anonim sementara ke pasien definitif agar TIDAK terhapus cascade
         await tx.screening.updateMany({
           where: { kunjunganId },
           data: { pasienId: effectiveExistingId }
@@ -530,15 +550,90 @@ const ugdService = {
           data: { pasienId: effectiveExistingId }
         });
 
+        await tx.diagnosisPasien.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.tindakanPasien.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.resep.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.rujukanKeluar.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.orderLaboratorium.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.orderRadiologi.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.tagihan.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.riwayatImunisasi.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.alergiPasien.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.clinicalImpression.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.sampelLaboratorium.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.laporanDiagnostik.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.resumeMedis.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        await tx.catatanPerkembangan.updateMany({
+          where: { kunjunganId },
+          data: { pasienId: effectiveExistingId }
+        });
+
+        // 2. Bersihkan data pasien anonim sementara yang tidak lagi memiliki kunjungan
         try {
           const otherVisits = await tx.kunjungan.count({ where: { pasienId: oldPasienId } });
           if (otherVisits === 0) {
             await tx.penjaminPasien.deleteMany({ where: { pasienId: oldPasienId } });
             await tx.alamatPasien.deleteMany({ where: { pasienId: oldPasienId } });
             await tx.kontakPasien.deleteMany({ where: { pasienId: oldPasienId } });
+            await tx.sosialPasien.deleteMany({ where: { pasienId: oldPasienId } });
+            await tx.dataBayi.deleteMany({ where: { pasienId: oldPasienId } });
             await tx.pasien.delete({ where: { id: oldPasienId } });
           }
-        } catch (_) {}
+        } catch (errClean) {
+          console.warn('[lengkapiAdministrasi] Info cleanup oldPasienId:', errClean.message);
+        }
       } else {
         // Skenario B: Update data pasien anonim saat ini menjadi identitas lengkap (Pasien Baru Resmi)
         const currentPasien = await tx.pasien.findUnique({ where: { id: finalPasienId } });
@@ -562,64 +657,62 @@ const ugdService = {
             ...(jenisKelamin ? { jenisKelamin } : {})
           }
         });
+      }
 
-        // Update / Upsert Alamat
-        if (alamatKtp) {
-          await tx.alamatPasien.upsert({
-            where: { pasienId: finalPasienId },
-            update: {
-              alamatKtp,
-              alamatDomisili: alamatDomisili || alamatKtp
-            },
-            create: {
-              pasien: { connect: { id: finalPasienId } },
-              alamatKtp,
-              alamatDomisili: alamatDomisili || alamatKtp,
-              rtRw: '00/00',
-              desaKelurahan: '-',
-              kecamatan: '-',
-              kabupatenKota: '-',
-              provinsi: '-',
-              kodePos: '00000'
-            }
-          });
-        }
+      // Update / Upsert Alamat, Kontak, dan Penjamin pada pasien definitif (finalPasienId) baik Skenario A maupun Skenario B
+      if (alamatKtp) {
+        await tx.alamatPasien.upsert({
+          where: { pasienId: finalPasienId },
+          update: {
+            alamatKtp,
+            alamatDomisili: alamatDomisili || alamatKtp
+          },
+          create: {
+            pasien: { connect: { id: finalPasienId } },
+            alamatKtp,
+            alamatDomisili: alamatDomisili || alamatKtp,
+            rtRw: '00/00',
+            desaKelurahan: '-',
+            kecamatan: '-',
+            kabupatenKota: '-',
+            provinsi: '-',
+            kodePos: '00000'
+          }
+        });
+      }
 
-        // Update / Upsert Kontak
-        if (noHp || kontakDarurat) {
-          await tx.kontakPasien.upsert({
-            where: { pasienId: finalPasienId },
-            update: {
-              ...(noHp ? { noHp } : {}),
-              ...(kontakDarurat ? { kontakDarurat } : {}),
-              ...(hubunganKontakDarurat ? { hubunganKontakDarurat } : {}),
-              ...(noHpDarurat ? { noHpDarurat } : {})
-            },
-            create: {
-              pasien: { connect: { id: finalPasienId } },
-              noHp: noHp || '080000000000',
-              kontakDarurat: kontakDarurat || '-',
-              hubunganKontakDarurat: hubunganKontakDarurat || 'Keluarga',
-              noHpDarurat: noHpDarurat || '-'
-            }
-          });
-        }
+      if (noHp || kontakDarurat) {
+        await tx.kontakPasien.upsert({
+          where: { pasienId: finalPasienId },
+          update: {
+            ...(noHp ? { noHp } : {}),
+            ...(kontakDarurat ? { kontakDarurat } : {}),
+            ...(hubunganKontakDarurat ? { hubunganKontakDarurat } : {}),
+            ...(noHpDarurat ? { noHpDarurat } : {})
+          },
+          create: {
+            pasien: { connect: { id: finalPasienId } },
+            noHp: noHp || '080000000000',
+            kontakDarurat: kontakDarurat || '-',
+            hubunganKontakDarurat: hubunganKontakDarurat || 'Keluarga',
+            noHpDarurat: noHpDarurat || '-'
+          }
+        });
+      }
 
-        // Update / Upsert Penjamin
-        if (jenisPenjamin) {
-          await tx.penjaminPasien.upsert({
-            where: { pasienId: finalPasienId },
-            update: {
-              jenisPenjamin,
-              noBpjs: noBpjs || null
-            },
-            create: {
-              pasien: { connect: { id: finalPasienId } },
-              jenisPenjamin,
-              noBpjs: noBpjs || null
-            }
-          });
-        }
+      if (jenisPenjamin) {
+        await tx.penjaminPasien.upsert({
+          where: { pasienId: finalPasienId },
+          update: {
+            jenisPenjamin,
+            noBpjs: noBpjs || null
+          },
+          create: {
+            pasien: { connect: { id: finalPasienId } },
+            jenisPenjamin,
+            noBpjs: noBpjs || null
+          }
+        });
       }
 
       // Update Kunjungan UGD menjadi LENGKAP
@@ -670,7 +763,9 @@ const ugdService = {
       instruksiMedis,
       diagnosaList = [],
       tindakanList = [],
-      keputusan = 'PULANG', // 'PULANG' | 'RAWAT_INAP' | 'DIRUJUK' | 'MENINGGAL'
+      hanyaObservasi = false,
+      isDraft = false,
+      keputusan = 'PULANG', // 'PULANG' | 'RAWAT_INAP' | 'DIRUJUK' | 'MENINGGAL' | 'OBSERVASI'
       alasanKeputusan = '',
       // Jika RAWAT_INAP
       tempatTidurInapId,
@@ -678,6 +773,8 @@ const ugdService = {
       // Jika DIRUJUK
       rujukanData = {}
     } = data;
+
+    const isObservasi = Boolean(hanyaObservasi || isDraft || keputusan === 'OBSERVASI');
 
     const result = await prisma.$transaction(async (tx) => {
       const kunjungan = await tx.kunjungan.findUnique({
@@ -719,7 +816,7 @@ const ugdService = {
           instruksiMedis: instruksiMedis || catatanBangsal || undefined,
           dokter: { connect: { id: dokterId } },
           penginput: { connect: { id: user.id } },
-          statusPemeriksaan: 'SELESAI'
+          statusPemeriksaan: isObservasi ? 'OBSERVASI' : 'SELESAI'
         },
         create: {
           kunjungan: { connect: { id: kunjunganId } },
@@ -731,7 +828,7 @@ const ugdService = {
           rencanaTerapi: rencanaTerapi || '',
           instruksiMedis: instruksiMedis || catatanBangsal || '',
           penginput: { connect: { id: user.id } },
-          statusPemeriksaan: 'SELESAI'
+          statusPemeriksaan: isObservasi ? 'OBSERVASI' : 'SELESAI'
         }
       });
 
@@ -739,12 +836,14 @@ const ugdService = {
       if (diagnosaList.length > 0) {
         await tx.diagnosisPasien.deleteMany({ where: { kunjunganId } });
         for (const diag of diagnosaList) {
-          if (!diag.icd10Id) continue;
+          const icd10Id = diag.icd10Id || diag.id_icd10;
+          if (!icd10Id) continue;
           await tx.diagnosisPasien.create({
             data: {
+              pasienId: kunjungan.pasienId,
               kunjunganId,
-              icd10Id: diag.icd10Id,
-              jenisDiagnosis: diag.jenisDiagnosis || 'Primer',
+              icd10Id,
+              jenisDiagnosis: diag.jenisDiagnosis || (diag.isPrimary ? 'Utama' : 'Primer'),
               dokterId: dokterId,
               penginputId: user.id
             }
@@ -752,23 +851,49 @@ const ugdService = {
         }
       }
 
-      // 3. Simpan Tindakan ICD-9
+      // 3. Simpan Tindakan ICD-9 (Beserta Alkes & BMHP)
       if (tindakanList.length > 0) {
         await tx.tindakanPasien.deleteMany({ where: { kunjunganId } });
         for (const t of tindakanList) {
-          if (!t.icd9Id) continue;
+          const icd9Id = t.icd9Id || t.id_icd9;
+          if (!icd9Id) continue;
+
+          const isEksternal = t.tipePelaksanaan === 'EKSTERNAL';
+          let catatan = t.catatan || null;
+          if (isEksternal) {
+            const faskes = t.faskesRujukan ? t.faskesRujukan.trim() : 'Faskes Luar';
+            const alasan = t.alasanRujukan ? t.alasanRujukan.trim() : (t.catatan ? t.catatan.trim() : 'Pemeriksaan Penunjang Luar');
+            catatan = `[RUJUKAN PENUNJANG EKSTERNAL - ${faskes}]: ${alasan}`;
+          }
+
           await tx.tindakanPasien.create({
             data: {
+              pasienId: kunjungan.pasienId,
               kunjunganId,
-              icd9Id: t.icd9Id,
+              icd9Id,
               pelaksanaId: user.id,
-              catatan: t.catatan || null
+              pelaksanaTeks: isEksternal ? 'Rujukan Luar' : (t.pelaksana || (user.role === 'PERAWAT' ? 'Perawat' : 'Dokter')),
+              catatanTindakan: catatan,
+              bmhpDetails: isEksternal ? null : (t.bmhpDetails || null),
+              alkesDetails: isEksternal ? null : (t.alkesDetails || null),
             }
           });
         }
       }
 
-      // 4. Bebaskan Bed UGD saat ini
+      // 4. JIKA HANYA OBSERVASI / DRAFT: JANGAN BEBASKAN BED & JANGAN DISCHARGE
+      if (isObservasi) {
+        const updated = await tx.kunjungan.update({
+          where: { id: kunjunganId },
+          data: {
+            statusKunjungan: 'OBSERVASI',
+            dokterTujuanId: dokterId,
+          }
+        });
+        return { ...updated, isDraft: true };
+      }
+
+      // 5. Bebaskan Bed UGD saat ini (Hanya saat Discharge Final)
       if (kunjungan.tempatTidurs && kunjungan.tempatTidurs.length > 0) {
         for (const bed of kunjungan.tempatTidurs) {
           await tx.tempatTidur.update({
@@ -782,7 +907,7 @@ const ugdService = {
         }
       }
 
-      // 5. Eksekusi Keputusan Akhir UGD
+      // 6. Eksekusi Keputusan Akhir UGD
       let targetStatusKunjungan = 'SELESAI';
       let statusPulang = 'PULANG_SEMBUH';
 
@@ -843,11 +968,22 @@ const ugdService = {
       return updated;
     });
 
-    // Generate tagihan kasir jika pasien pulang
+    // Generate tagihan kasir jika pasien pulang (hanya saat final discharge)
+    if (!isObservasi && (keputusan === 'PULANG' || !keputusan)) {
+      try {
+        await kasirService.generateTagihan(kunjunganId);
+      } catch (errTagihan) {
+        console.warn('[Kasir UGD] Info generate tagihan:', errTagihan.message);
+      }
+    }
+
+    // Catat fee dokter & auto check-in dokter UGD jika pemeriksaan selesai
     try {
-      await kasirService.generateTagihan(kunjunganId);
-    } catch (errTagihan) {
-      console.warn('[Kasir UGD] Info generate tagihan:', errTagihan.message);
+      const { catatFeePenangananDokter, autoCheckInDokterIfMissing } = require('../utils/fee.helper');
+      await catatFeePenangananDokter(kunjunganId, user?.id);
+      await autoCheckInDokterIfMissing(user?.id, result?.faskesId, new Date());
+    } catch (e) {
+      console.warn('[UGD Fee & Check-in]', e.message);
     }
 
     return result;

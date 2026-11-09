@@ -3,8 +3,11 @@ const screeningService = require('../services/screening.service');
 const createScreening = async (req, res, next) => {
   try {
     const data = req.body;
-    // Inject nama petugas dari token JWT
+    // Inject nama petugas dan faskes dari token JWT
     data.petugasNama = req.user?.namaLengkap || req.user?.username || 'Perawat';
+    if (!data.faskesId && req.user?.faskesId) {
+      data.faskesId = req.user.faskesId;
+    }
 
     const result = await screeningService.createScreening(data, req.user?.id);
 

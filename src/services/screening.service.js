@@ -1,7 +1,29 @@
 const prisma = require('../config/prisma');
 
+const parseSafeFloat = (val) => {
+  if (val === null || val === undefined || val === '') return null;
+  const num = parseFloat(val);
+  return isNaN(num) ? null : num;
+};
+
+const parseSafeInt = (val) => {
+  if (val === null || val === undefined || val === '') return null;
+  const num = parseInt(val, 10);
+  return isNaN(num) ? null : num;
+};
+
 const createScreening = async (data, petugasId) => {
   const result = await prisma.$transaction(async (tx) => {
+    let finalPasienId = data.pasienId;
+    if (data.kunjunganId) {
+      const kunj = await tx.kunjungan.findUnique({
+        where: { id: data.kunjunganId },
+        select: { id: true, pasienId: true }
+      });
+      if (kunj && !finalPasienId) {
+        finalPasienId = kunj.pasienId;
+      }
+    }
 
     // Kemas semua data tambahan (Step 2-5) ke dalam JSON
     const dataTambahan = {
@@ -41,7 +63,7 @@ const createScreening = async (data, petugasId) => {
         ptmJantung: data.ptmJantung || [],
         ptmStroke: data.ptmStroke || [],
         ptmKanker: data.ptmKanker || [],
-        gulaDarahSewaktu: data.gulaDarahSewaktu || null,
+        gulaDarahSewaktu: parseSafeFloat(data.gulaDarahSewaktu),
       },
       // Step 4 - TB & Kesehatan Jiwa
       tb: {
@@ -60,16 +82,16 @@ const createScreening = async (data, petugasId) => {
         statusPsikologis: data.statusPsikologis || 'Tenang / Normal',
       },
       antropometri: {
-        luasPermukaanTubuh: data.luasPermukaanTubuh ? parseFloat(data.luasPermukaanTubuh) : null,
+        luasPermukaanTubuh: parseSafeFloat(data.luasPermukaanTubuh),
       },
       // Skrining Khusus Poli Gigi & Mulut
       gigi: {
         golonganDarah: data.golonganDarah || null,
         rhesus: data.rhesus || null,
         statusKehamilan: data.statusKehamilan || null,
-        debrisIndex: data.debrisIndex !== undefined ? parseFloat(data.debrisIndex) : null,
-        kalkulusIndex: data.kalkulusIndex !== undefined ? parseFloat(data.kalkulusIndex) : null,
-        skorOhis: data.skorOhis !== undefined ? parseFloat(data.skorOhis) : null,
+        debrisIndex: parseSafeFloat(data.debrisIndex),
+        kalkulusIndex: parseSafeFloat(data.kalkulusIndex),
+        skorOhis: parseSafeFloat(data.skorOhis),
         interpretasiOhis: data.interpretasiOhis || null,
         riwayatAlergiAnestesi: data.riwayatAlergiAnestesi || null,
         riwayatPengencerDarah: data.riwayatPengencerDarah || null,
@@ -87,9 +109,9 @@ const createScreening = async (data, petugasId) => {
     };
 
     // Update data Golongan Darah & Rhesus di Master Pasien jika diisi saat Skrining
-    if (data.golonganDarah || data.rhesus) {
+    if (finalPasienId && (data.golonganDarah || data.rhesus)) {
       await tx.pasien.update({
-        where: { id: data.pasienId },
+        where: { id: finalPasienId },
         data: {
           ...(data.golonganDarah && { golonganDarah: data.golonganDarah }),
           ...(data.rhesus && { rhesus: data.rhesus })
@@ -97,51 +119,72 @@ const createScreening = async (data, petugasId) => {
       });
     }
 
-    // 1. Simpan data screening ke database
-    const screening = await tx.screening.create({
-      data: {
-        pasienId: data.pasienId,
-        kunjunganId: data.kunjunganId,
-        petugas: data.petugasNama || 'Perawat',
-        jenisKedatangan: data.jenisKedatangan || 'Poli',
-        kategoriTriage: data.kategoriTriage || 'Hijau',
-        // Tanda Vital & Antropometri
-        tinggiBadan: data.tinggiBadan ? parseFloat(data.tinggiBadan) : null,
-        beratBadan: data.beratBadan ? parseFloat(data.beratBadan) : null,
-        lingkarPerut: data.lingkarPerut ? parseFloat(data.lingkarPerut) : null,
-        imt: data.imt ? parseFloat(data.imt) : null,
-        tekananDarahSistolik: data.tekananDarahSistolik ? parseInt(data.tekananDarahSistolik) : null,
-        tekananDarahDiastolik: data.tekananDarahDiastolik ? parseInt(data.tekananDarahDiastolik) : null,
-        nadi: data.nadi ? parseInt(data.nadi) : null,
-        frekuensiNapas: data.frekuensiNapas ? parseInt(data.frekuensiNapas) : null,
-        suhuTubuh: data.suhuTubuh ? parseFloat(data.suhuTubuh) : null,
-        saturasiOksigen: data.saturasiOksigen ? parseInt(data.saturasiOksigen) : null,
-        skalaNyeri: data.skalaNyeri !== undefined ? parseInt(data.skalaNyeri) : null,
-        // Keluhan & Gaya Hidup
-        keluhanUtama: data.keluhanUtama || null,
-        riwayatKeluarga: data.riwayatKeluarga || [],
-        merokok: data.merokok || null,
-        // Hasil Screening
-        statusKesehatan: data.statusKesehatan || null,
-        prioritasPelayanan: data.prioritasPelayanan || null,
-        catatanPetugas: data.catatanPetugas || null,
-        // Semua data tambahan (JSON)
-        dataTambahan,
-        headToToe: data.headToToe || null,
-      },
-    });
+    const screeningPayload = {
+      pasienId: finalPasienId,
+      petugas: data.petugasNama || 'Perawat',
+      jenisKedatangan: data.jenisKedatangan || 'Poli',
+      kategoriTriage: data.kategoriTriage || 'Hijau',
+      // Tanda Vital & Antropometri
+      tinggiBadan: parseSafeFloat(data.tinggiBadan),
+      beratBadan: parseSafeFloat(data.beratBadan),
+      lingkarPerut: parseSafeFloat(data.lingkarPerut),
+      imt: parseSafeFloat(data.imt),
+      tekananDarahSistolik: parseSafeInt(data.tekananDarahSistolik),
+      tekananDarahDiastolik: parseSafeInt(data.tekananDarahDiastolik),
+      nadi: parseSafeInt(data.nadi),
+      frekuensiNapas: parseSafeInt(data.frekuensiNapas),
+      suhuTubuh: parseSafeFloat(data.suhuTubuh),
+      saturasiOksigen: parseSafeInt(data.saturasiOksigen),
+      skalaNyeri: parseSafeInt(data.skalaNyeri),
+      // Keluhan & Gaya Hidup
+      keluhanUtama: data.keluhanUtama || null,
+      riwayatKeluarga: Array.isArray(data.riwayatKeluarga) ? data.riwayatKeluarga : [],
+      merokok: data.merokok || null,
+      // Hasil Screening
+      statusKesehatan: data.statusKesehatan || null,
+      prioritasPelayanan: data.prioritasPelayanan || null,
+      catatanPetugas: data.catatanPetugas || null,
+      // Semua data tambahan (JSON)
+      dataTambahan,
+      headToToe: data.headToToe || null,
+    };
+
+    // 1. Simpan atau Update data screening ke database (Upsert jika kunjunganId sudah memiliki screening)
+    let screening;
+    if (data.kunjunganId) {
+      screening = await tx.screening.upsert({
+        where: { kunjunganId: data.kunjunganId },
+        create: {
+          ...screeningPayload,
+          kunjunganId: data.kunjunganId,
+        },
+        update: screeningPayload,
+      });
+    } else {
+      screening = await tx.screening.create({
+        data: screeningPayload,
+      });
+    }
 
     // 2. Update status kunjungan → pasien siap diperiksa dokter
-    await tx.kunjungan.update({
-      where: { id: data.kunjunganId },
-      data: { statusKunjungan: 'MENUNGGU_DOKTER' },
-    });
+    if (data.kunjunganId) {
+      await tx.kunjungan.update({
+        where: { id: data.kunjunganId },
+        data: { statusKunjungan: 'MENUNGGU_DOKTER' },
+      });
+    }
 
     return screening;
   });
   
   // 3. Trigger sinkronisasi SATUSEHAT (berjalan di background tanpa memblokir response UI)
   sendObservationToSatuSehat(result.id).catch(err => console.error(err));
+
+  // 4. Trigger auto check-in untuk perawat jika belum presensi pada shift saat ini
+  if (petugasId) {
+    const { autoCheckInPerawatIfMissing } = require('../utils/fee.helper');
+    autoCheckInPerawatIfMissing(petugasId, data.faskesId, new Date()).catch(err => console.warn(err));
+  }
 
   return result;
 };

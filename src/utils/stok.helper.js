@@ -62,7 +62,7 @@ const kurangiStokObatFaskes = async (tx, {
 
       await catatMutasiStok(tx, {
         faskesId,
-        kategoriItem: updated.obat?.kategori === 'BMHP' ? 'BMHP' : 'OBAT',
+        kategoriItem: (updated.obat?.kategori || '').toUpperCase().includes('BMHP') ? 'BMHP' : 'OBAT',
         obatId,
         namaItem: updated.obat?.namaObat || 'Item Logistik',
         sediaan: updated.obat?.sediaan,
@@ -142,7 +142,7 @@ const kurangiStokObatFaskes = async (tx, {
 
     await catatMutasiStok(tx, {
       faskesId,
-      kategoriItem: (batch.obat?.kategori || updated.obat?.kategori) === 'BMHP' ? 'BMHP' : 'OBAT',
+      kategoriItem: ((batch.obat?.kategori || updated.obat?.kategori) || '').toUpperCase().includes('BMHP') ? 'BMHP' : 'OBAT',
       obatId,
       namaItem: batch.obat?.namaObat || updated.obat?.namaObat || 'Item Logistik',
       sediaan: batch.obat?.sediaan || updated.obat?.sediaan,

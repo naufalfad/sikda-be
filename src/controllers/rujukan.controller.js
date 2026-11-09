@@ -63,8 +63,26 @@ const kirimServiceRequestSatuSehat = async (req, res, next) => {
   }
 };
 
+/**
+ * GET /api/rujukan/antrian-penunjang
+ * Ambil daftar seluruh order penunjang (Lab Luar & Radiologi) untuk Loket Administrasi
+ */
+const getAntrianPenunjang = async (req, res, next) => {
+  try {
+    const list = await rujukanService.getAntrianRujukanPenunjang(req.user);
+    res.json({
+      status: 'success',
+      data: list
+    });
+  } catch (error) {
+    console.error('Error in getAntrianPenunjang:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   getAntrianRujukan,
+  getAntrianPenunjang,
   getRujukanDetailByKunjungan,
   kirimServiceRequestSatuSehat
 };

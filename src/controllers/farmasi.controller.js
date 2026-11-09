@@ -164,7 +164,7 @@ exports.prosesResep = async (req, res) => {
 
               await catatMutasiStok(tx, {
                 faskesId: targetFaskesId,
-                kategoriItem: specificBatch.obat?.kategori === 'BMHP' ? 'BMHP' : 'OBAT',
+                kategoriItem: (specificBatch.obat?.kategori || '').toUpperCase().includes('BMHP') ? 'BMHP' : 'OBAT',
                 obatId: detail.obatId,
                 namaItem: specificBatch.obat?.namaObat || detail.obat?.namaObat || 'Obat Resep',
                 sediaan: specificBatch.obat?.sediaan || detail.obat?.sediaan,
@@ -216,7 +216,7 @@ exports.prosesResep = async (req, res) => {
 
             await catatMutasiStok(tx, {
               faskesId: targetFaskesId,
-              kategoriItem: batch.obat?.kategori === 'BMHP' ? 'BMHP' : 'OBAT',
+              kategoriItem: (batch.obat?.kategori || '').toUpperCase().includes('BMHP') ? 'BMHP' : 'OBAT',
               obatId: detail.obatId,
               namaItem: batch.obat?.namaObat || detail.obat?.namaObat || 'Obat Resep',
               sediaan: batch.obat?.sediaan || detail.obat?.sediaan,
@@ -348,9 +348,13 @@ exports.getStokFaskes = async (req, res) => {
 
     const obatWhere = {};
     if (hanyaObat === 'true') {
-      obatWhere.kategori = { not: 'BMHP' };
+      obatWhere.NOT = { kategori: { contains: 'BMHP', mode: 'insensitive' } };
     } else if (kategori) {
-      obatWhere.kategori = kategori;
+      if (kategori.toUpperCase() === 'BMHP') {
+        obatWhere.kategori = { contains: 'BMHP', mode: 'insensitive' };
+      } else {
+        obatWhere.kategori = kategori;
+      }
     }
 
     if (search) {
@@ -490,7 +494,7 @@ exports.tambahStokMasuk = async (req, res) => {
       }
     });
 
-    const isBmhp = stokUpdated.obat?.kategori === 'BMHP';
+    const isBmhp = Boolean(stokUpdated.obat?.kategori && stokUpdated.obat.kategori.toUpperCase().includes('BMHP'));
     const stokAkhir = stokUpdated.stok;
     const stokAwal = stokAkhir - qty;
 
@@ -754,7 +758,7 @@ exports.kurangiStokKeluar = async (req, res) => {
       include: { obat: true }
     });
 
-    const isBmhp = updated.obat?.kategori === 'BMHP';
+    const isBmhp = Boolean(updated.obat?.kategori && updated.obat.kategori.toUpperCase().includes('BMHP'));
     const stokAkhir = updated.stok;
     const stokAwal = stokAkhir + qty;
 

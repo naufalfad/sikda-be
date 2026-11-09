@@ -6,7 +6,15 @@ const radiologiService = {
    * (Generate ACSN Unik: ACSN-YYYYMMDD-XXXX)
    */
   createOrder: async (data) => {
-    const { kunjunganId, dokterId, prioritas = 'routine', catatan, details = [] } = data;
+    const {
+      kunjunganId,
+      dokterId,
+      prioritas = 'routine',
+      catatan,
+      details = [],
+      isRujukanLuar = true,
+      faskesTujuan = 'Instalasi Radiologi RSUD Terdekat'
+    } = data;
 
     // Validasi Kunjungan
     const kunjungan = await prisma.kunjungan.findUnique({
@@ -25,7 +33,6 @@ const radiologiService = {
     const acsn = `ACSN-${todayStr}-${randomSuffix}`;
 
     const result = await prisma.$transaction(async (tx) => {
-      // Hapus order lama jika ini re-run test pada kunjungan 1-to-1 yang sama
       await tx.orderRadiologi.deleteMany({
         where: { kunjunganId },
       });
@@ -36,9 +43,11 @@ const radiologiService = {
           pasienId: kunjungan.pasienId,
           dokterId,
           acsn,
-          status: 'REQUESTED',
+          status: isRujukanLuar ? 'MENUNGGU_HASIL_RUJUKAN' : 'REQUESTED',
           prioritas,
           catatanKlinis: catatan,
+          isRujukanLuar: Boolean(isRujukanLuar),
+          faskesTujuan: faskesTujuan || 'Instalasi Radiologi RSUD Terdekat',
           details: {
             create: details.map((d) => ({
               kodeLoinc: d.kodeLoinc || '39051-8',
@@ -203,6 +212,64 @@ const radiologiService = {
         order: updatedOrder,
         hasil,
       };
+    });
+  },
+  /**
+   * 5. Dokter / Perawat menginput hasil rujukan balik radiologi dari RSUD / Lab Luar
+   * (Kertas hasil fisik yang dibawa kembali oleh pasien)
+   */
+  simpanHasilRujukanLuar: async (orderId, data) => {
+    const { catatanHasil, dokumenHasilUrl, kesimpulan, bacaanNaratif, dokterRadiologiNama } = data;
+
+    const order = await prisma.orderRadiologi.findUnique({
+      where: { id: orderId }
+    });
+
+    if (!order) {
+      const error = new Error('Order Radiologi tidak ditemukan.');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    return await prisma.$transaction(async (tx) => {
+      // Upsert HasilRadiologi agar resource DiagnosticReport / Observation SATUSEHAT tetap terpenuhi
+      await tx.hasilRadiologi.upsert({
+        where: { orderRadiologiId: orderId },
+        update: {
+          kesimpulan: kesimpulan || catatanHasil || 'Pemeriksaan radiologi luar selesai.',
+          bacaanNaratif: bacaanNaratif || catatanHasil || 'Pemeriksaan dilakukan di faskes rujukan eksternal.',
+          wadoUrl: dokumenHasilUrl || null
+        },
+        create: {
+          orderRadiologiId: orderId,
+          kesimpulan: kesimpulan || catatanHasil || 'Pemeriksaan radiologi luar selesai.',
+          bacaanNaratif: bacaanNaratif || catatanHasil || 'Pemeriksaan dilakukan di faskes rujukan eksternal.',
+          wadoUrl: dokumenHasilUrl || null
+        }
+      });
+
+      const updatedOrder = await tx.orderRadiologi.update({
+        where: { id: orderId },
+        data: {
+          status: 'COMPLETED',
+          catatanHasil: catatanHasil || kesimpulan || bacaanNaratif || '',
+          dokumenHasilUrl: dokumenHasilUrl || null
+        },
+        include: {
+          details: true,
+          hasil: true,
+          pasien: true,
+          kunjungan: true
+        }
+      });
+
+      // Kembalikan status kunjungan pasien ke DIPERIKSA
+      await tx.kunjungan.update({
+        where: { id: order.kunjunganId },
+        data: { statusKunjungan: 'DIPERIKSA' }
+      });
+
+      return updatedOrder;
     });
   },
 };

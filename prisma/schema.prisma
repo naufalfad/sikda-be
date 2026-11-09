@@ -64,6 +64,10 @@ model User {
 
   // Relasi CPPT Rawat Inap
   catatanPerkembangans CatatanPerkembangan[] @relation("PetugasCatatanPerkembangan")
+
+  // Relasi Presensi & Fee Tenaga Medis
+  presensiNakes        PresensiNakes[]        @relation("UserPresensi")
+  feePenangananDokter  LogFeeDokter[]         @relation("DokterFeePenanganan")
 }
 
 // 1. Data Induk Pasien
@@ -297,6 +301,9 @@ model Kunjungan {
   // Relasi CPPT Rawat Inap
   catatanPerkembangans CatatanPerkembangan[]
 
+  // Relasi Fee Dokter
+  logFeeDokter         LogFeeDokter[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -497,6 +504,10 @@ model TindakanPasien {
   pelaksanaTeks   String  @default("Dokter") // Dokter, Perawat, dll (jika tanpa ID)
   catatanTindakan String? @db.Text
 
+  // Rincian BMHP & Alat Kesehatan Terpakai (Snapshot JSONB)
+  bmhpDetails  Json? // Array of { obatId, namaItem, jumlah, hargaSatuan, subTotal }
+  alkesDetails Json? // Array of { asetId, namaAset, tarifPemakaian }
+
   waktuTindakan DateTime @default(now())
 
   createdAt DateTime @default(now())
@@ -550,8 +561,9 @@ model MasterLaboratorium {
   satuan       String?
   nilaiRujukan String?
   kodePanelLab String?
-  hargaTarif   Float   @default(0)
-  statusAktif  Boolean @default(true)
+  hargaTarif       Float   @default(0)
+  tersediaInternal Boolean @default(true) // true: dikerjakan lab internal faskes, false: dirujuk ke lab eksternal
+  statusAktif      Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -745,11 +757,14 @@ model OrderLaboratoriumDetail {
   orderId String
   order   OrderLaboratorium @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
-  parameter    String
-  hasil        String?
-  satuan       String?
-  nilaiRujukan String?
-  kritis       Boolean @default(false)
+  parameter     String
+  hasil         String?
+  satuan        String?
+  nilaiRujukan  String?
+  kritis        Boolean @default(false)
+  isRujukanLuar Boolean @default(false) // TRUE jika tes dirujuk ke lab eksternal (Labkesda/RS)
+  faskesTujuan  String? // Nama Faskes Lab rujukan (misal: "UPT Labkesda Kabupaten")
+  metodeRujukan String? // "KIRIM_PASIEN" atau "KIRIM_SPESIMEN"
 }
 
 // ==========================================
@@ -760,8 +775,9 @@ model MasterModality {
   id           String   @id @default(cuid())
   kodeDicom    String   @unique // Contoh: DX, CT, MR, US
   namaModality String // Contoh: Digital Radiography, Computed Tomography
-  deskripsi    String?
-  statusAktif  Boolean  @default(true)
+  deskripsi        String?
+  tersediaInternal Boolean  @default(false) // Mayoritas Puskesmas belum memiliki instalasi Radiologi mandiri
+  statusAktif      Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -793,6 +809,12 @@ model OrderRadiologi {
   catatanKlinis String?  @db.Text
   prioritas     String   @default("routine") // routine / stat
   tanggalOrder  DateTime @default(now())
+
+  // Rujukan Penunjang Eksternal (Mayoritas FKTP / Puskesmas tidak memiliki instalasi radiologi mandiri)
+  isRujukanLuar   Boolean @default(true) // TRUE: Dirujuk ke RS / Lab Radiologi luar (Biaya Rp 0 di Puskesmas)
+  faskesTujuan    String? @default("Instalasi Radiologi RSUD Terdekat")
+  dokumenHasilUrl String? // URL scan/foto berkas rontgen dari RS luar
+  catatanHasil    String? @db.Text // Kesimpulan/kesan bacaan hasil rontgen luar
 
   satusehatSync Json?
 
@@ -1473,6 +1495,8 @@ model AsetRuangan {
   tahunPerolehan Int?
   sumberAnggaran String? // APBD, APBN, BOK, BLUD, HIBAH
   hargaPerolehan Float?  @default(0)
+  tarifPemakaian Float   @default(0) // Tarif sewa/pemakaian alat kesehatan untuk billing tindakan kasir
+  isAlkesTindakan Boolean @default(false) // Saklar: alat ini dapat dipilih dalam tindakan medis poli/UGD
 
   kondisiAset       String @default("BAIK") // BAIK, RUSAK_RINGAN, RUSAK_BERAT, AFKIR
   statusOperasional String @default("AKTIF_DIGUNAKAN") // AKTIF_DIGUNAKAN, DALAM_PERBAIKAN, DALAM_KALIBRASI, NON_AKTIF
@@ -1563,6 +1587,21 @@ model Faskes {
   // SATUSEHAT Interoperability (Future-Ready)
   ihsOrganizationId String? @unique // Organization ID SATUSEHAT
 
+  // Profil Eksekutif GIS & Akreditasi Faskes
+  tingkatFaskes          String?   @default("FASKES_1") // RUMAH_SAKIT, FASKES_1, FASKES_2, FASKES_3, PUSTU, POSYANDU, POS_LANSIA, LABORATORIUM, APOTEK, AMBULANCE
+  nomorIzinOperasional   String?   // Surat Izin Operasional Faskes
+  tanggalIzinOperasional DateTime?
+  akreditasi             String?   @default("PARIPURNA") // PARIPURNA, UTAMA, MADYA, DASAR
+  penanggungJawab        String?   // Nama Kepala / Direktur RS / Penanggung Jawab Medis
+  sipPenanggungJawab     String?   // Nomor SIP / STR Penanggung Jawab
+  kontakDarurat          String?   // Emergency Call Center 24 Jam / Hotline
+  jamOperasional         String?   @default("24 Jam") // e.g. "24 Jam", "08:00 - 16:00"
+  layananUnggulan        String?   // Rincian Layanan Unggulan (UGD 24 Jam, PONED, Rawat Inap, Radiologi, dll)
+  fotoUrl                String?   // Foto Faskes / Gedung / Unit Ambulance
+  kapasitasBed           Int?      @default(0)
+  ketersediaanAmbulance  Int?      @default(0) // Jumlah armada ambulance siaga
+  jenisAmbulance         String?   // PASIEN_GAWAT_DARURAT, JENAZAH, TRANSPORT_MEDIS
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1581,6 +1620,11 @@ model Faskes {
   logAgregats       LogAgregatHarianDinkes[]
   bookingsOnline    BookingAntreanOnline[]
   mutasiStoks       MutasiStokLogistik[]
+
+  // Relasi Presensi & Fee Tenaga Medis
+  masterTarifFee    MasterTarifFee?
+  presensiNakes     PresensiNakes[]
+  logFeeDokter      LogFeeDokter[]
 }
 
 // ==========================================
@@ -1763,5 +1807,89 @@ model BookingAntreanOnline {
   
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
+}
+
+// ==========================================
+// MODUL DOCTOR FEE & FEE PERAWAT (REMUNERASI)
+// ==========================================
+
+model MasterTarifFee {
+  id                      String   @id @default(cuid())
+  faskesId                String   @unique
+  faskes                  Faskes   @relation(fields: [faskesId], references: [id], onDelete: Cascade)
+
+  // Fee Kehadiran (Flat per shift)
+  feeKehadiranDokter      Float    @default(150000)
+  feeKehadiranPerawat     Float    @default(75000)
+
+  // Fee Penanganan Pasien Dokter (Per Pasien Selesai)
+  feePerPasienDokter      Float    @default(15000)
+
+  // Fee Tambahan Tindakan Medis Dokter (opsional)
+  feePerTindakanDokter    Float    @default(20000)
+
+  statusAktif             Boolean  @default(true)
+  keterangan              String?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+}
+
+model PresensiNakes {
+  id               String    @id @default(cuid())
+  faskesId         String
+  faskes           Faskes    @relation(fields: [faskesId], references: [id], onDelete: Cascade)
+
+  userId           String
+  user             User      @relation("UserPresensi", fields: [userId], references: [id], onDelete: Cascade)
+
+  profesi          String    // "DOKTER", "PERAWAT"
+  tanggal          DateTime  @db.Date
+  shift            String    @default("PAGI") // "PAGI", "SIANG", "MALAM"
+  jamMasuk         DateTime  @default(now())
+  jamKeluar        DateTime?
+  statusKehadiran  String    @default("HADIR") // "HADIR", "IZIN", "SAKIT", "ALPA"
+  statusVerifikasi String    @default("VERIFIED") // "VERIFIED", "PENDING"
+  catatan          String?
+
+  // Snapshot nominal fee kehadiran
+  nominalFee       Float     @default(0)
+  statusPembayaran String    @default("PENDING") // "PENDING", "DIBAYAR"
+  tanggalBayar     DateTime?
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([userId, tanggal, shift])
+  @@index([faskesId, tanggal])
+  @@index([userId, statusPembayaran])
+}
+
+model LogFeeDokter {
+  id               String    @id @default(cuid())
+  faskesId         String
+  faskes           Faskes    @relation(fields: [faskesId], references: [id], onDelete: Cascade)
+
+  dokterId         String
+  dokter           User      @relation("DokterFeePenanganan", fields: [dokterId], references: [id], onDelete: Cascade)
+
+  kunjunganId      String
+  kunjungan        Kunjungan @relation(fields: [kunjunganId], references: [id], onDelete: Cascade)
+
+  tanggalPelayanan DateTime  @default(now())
+  jenisLayanan     String    // "RAWAT_JALAN", "UGD", "RAWAT_INAP"
+  namaPasien       String
+  noRM             String?
+
+  nominalFee       Float     @default(0)
+  statusPembayaran String    @default("PENDING") // "PENDING", "DIBAYAR"
+  tanggalBayar     DateTime?
+  catatan          String?
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([dokterId, kunjunganId])
+  @@index([faskesId, tanggalPelayanan])
+  @@index([dokterId, statusPembayaran])
 }
 

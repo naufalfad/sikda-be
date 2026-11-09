@@ -992,6 +992,19 @@ async function main() {
   });
 
   console.log('✅ Kunjungan berhasil diisolasi ke masing-masing faskes!');
+
+  // ==============================================================
+  // 9. SEED ALKES & BMHP LENGKAP, PEMERIKSAAN & SEBARAN FASKES GIS DINKES
+  // ==============================================================
+  const { seedAlkesAndBmhp } = require('./seeders/seed-alkes-bmhp-lengkap');
+  await seedAlkesAndBmhp();
+
+  const { seedPemeriksaanLengkap } = require('./seeders/seed-pemeriksaan-lengkap');
+  await seedPemeriksaanLengkap();
+
+  const { seedSebaranFaskes } = require('./seeders/seed-gis-faskes-sebaran');
+  await seedSebaranFaskes();
+
   console.log('🎉 SEEDING MULTI-FASKES SELESAI DENGAN SUKSES!');
 }
 

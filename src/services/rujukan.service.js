@@ -41,6 +41,115 @@ const getAntrianRujukan = async (user) => {
 };
 
 /**
+ * Service untuk mengambil antrean rujukan penunjang (Order Lab & Order Radiologi) untuk Loket Administrasi
+ */
+const getAntrianRujukanPenunjang = async (user) => {
+  const where = {};
+  if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
+    where.kunjungan = { faskesId: user.faskesId };
+  }
+
+  // 1. Ambil Order Laboratorium
+  const labOrders = await prisma.orderLaboratorium.findMany({
+    where,
+    include: {
+      pasien: {
+        include: { alamat: true }
+      },
+      dokter: { select: { id: true, namaLengkap: true } },
+      details: true,
+      kunjungan: {
+        include: {
+          poliklinik: true,
+          tagihan: true
+        }
+      }
+    },
+    orderBy: {
+      tanggalOrder: 'desc'
+    }
+  });
+
+  // 2. Ambil Order Radiologi
+  const radOrders = await prisma.orderRadiologi.findMany({
+    where,
+    include: {
+      pasien: {
+        include: { alamat: true }
+      },
+      dokter: { select: { id: true, namaLengkap: true } },
+      details: true,
+      hasil: true,
+      kunjungan: {
+        include: {
+          poliklinik: true,
+          tagihan: true
+        }
+      }
+    },
+    orderBy: {
+      tanggalOrder: 'desc'
+    }
+  });
+
+  // 3. Format dan satukan data
+  const formattedLab = labOrders.map((item) => {
+    const tagihan = item.kunjungan?.tagihan;
+    const isLunas = tagihan?.statusPembayaran === 'LUNAS' || tagihan?.isLunas === true || item.kunjungan?.statusKunjungan === 'SELESAI';
+    const statusPembayaran = isLunas ? 'LUNAS' : (tagihan?.statusPembayaran || 'BELUM_BAYAR');
+
+    return {
+      id: item.id,
+      jenisPenunjang: 'LABORATORIUM',
+      nomorRegistrasi: `LAB-${item.id.slice(0, 8).toUpperCase()}`,
+      tanggalOrder: item.tanggalOrder,
+      pasienId: item.pasienId,
+      pasien: item.pasien,
+      dokter: item.dokter,
+      catatanKlinis: item.catatanKlinis,
+      details: item.details,
+      summaryTindakan: item.details.map(d => d.parameter).join(', ') || 'Pemeriksaan Lab',
+      kunjunganId: item.kunjunganId,
+      kunjungan: item.kunjungan,
+      poliAsal: item.kunjungan?.poliklinik?.namaPoli || 'Poli Umum',
+      isLunas,
+      statusPembayaran,
+      rawOrder: item
+    };
+  });
+
+  const formattedRad = radOrders.map((item) => {
+    const tagihan = item.kunjungan?.tagihan;
+    const isLunas = tagihan?.statusPembayaran === 'LUNAS' || tagihan?.isLunas === true || item.kunjungan?.statusKunjungan === 'SELESAI';
+    const statusPembayaran = isLunas ? 'LUNAS' : (tagihan?.statusPembayaran || 'BELUM_BAYAR');
+
+    return {
+      id: item.id,
+      jenisPenunjang: 'RADIOLOGI',
+      nomorRegistrasi: item.acsn || `RAD-${item.id.slice(0, 8).toUpperCase()}`,
+      tanggalOrder: item.tanggalOrder,
+      pasienId: item.pasienId,
+      pasien: item.pasien,
+      dokter: item.dokter,
+      catatanKlinis: item.catatanKlinis,
+      details: item.details,
+      summaryTindakan: item.details.map(d => d.namaPemeriksaan).join(', ') || 'Pemeriksaan Radiologi',
+      kunjunganId: item.kunjunganId,
+      kunjungan: item.kunjungan,
+      poliAsal: item.kunjungan?.poliklinik?.namaPoli || 'Poli Umum',
+      isLunas,
+      statusPembayaran,
+      rawOrder: item
+    };
+  });
+
+  // Gabungkan dan urutkan descending berdasarkan tanggalOrder
+  return [...formattedLab, ...formattedRad].sort((a, b) => {
+    return new Date(b.tanggalOrder).getTime() - new Date(a.tanggalOrder).getTime();
+  });
+};
+
+/**
  * Service untuk mengambil detail rujukan berdasarkan kunjunganId
  */
 const getRujukanDetailByKunjungan = async (kunjunganId) => {
@@ -131,6 +240,7 @@ const kirimServiceRequestSatuSehat = async (kunjunganId) => {
 
 module.exports = {
   getAntrianRujukan,
+  getAntrianRujukanPenunjang,
   getRujukanDetailByKunjungan,
   kirimServiceRequestSatuSehat
 };

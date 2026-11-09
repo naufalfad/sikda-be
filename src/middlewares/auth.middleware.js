@@ -12,6 +12,12 @@ const protect = async (req, res, next) => {
       // Get token from header
       token = req.headers.authorization.split(' ')[1];
 
+      if (!token || token === 'null' || token === 'undefined') {
+        const err = new Error('Token otentikasi tidak valid atau belum disertakan');
+        err.statusCode = 401;
+        return next(err);
+      }
+
       // Verify token
       const decoded = jwt.verify(token, process.env.JWT_SECRET || 'rahasia-super-aman');
 
@@ -42,8 +48,8 @@ const protect = async (req, res, next) => {
       req.user = { ...decoded, ...dbUser };
       return next();
     } catch (error) {
-      console.error(error);
-      const err = new Error('Not authorized, token failed');
+      console.warn(`[AUTH 401] ${req.method} ${req.originalUrl} - ${error.message}`);
+      const err = new Error('Not authorized, token failed: ' + (error.message || 'sesi tidak valid'));
       err.statusCode = 401;
       return next(err);
     }
@@ -67,4 +73,15 @@ const protectPasienOnline = async (req, res, next) => {
   });
 };
 
-module.exports = { protect, protectPasienOnline };
+const restrictTo = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      const err = new Error('Akses dibatasi: Anda tidak memiliki wewenang klinis untuk tindakan ini.');
+      err.statusCode = 403;
+      return next(err);
+    }
+    next();
+  };
+};
+
+module.exports = { protect, protectPasienOnline, restrictTo };

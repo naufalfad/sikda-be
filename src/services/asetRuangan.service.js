@@ -329,7 +329,7 @@ const syncBedToSatuSehat = async (id) => {
 // ==========================================
 
 const getAsets = async (query = {}, user) => {
-  const { search, ruanganId, kategoriAset, kondisiAset, statusOperasional } = query;
+  const { search, ruanganId, kategoriAset, kondisiAset, statusOperasional, isAlkesTindakan } = query;
   const where = {};
   applyFaskesScope(where, user);
 
@@ -346,8 +346,7 @@ const getAsets = async (query = {}, user) => {
   if (kategoriAset) where.kategoriAset = kategoriAset;
   if (kondisiAset) where.kondisiAset = kondisiAset;
   if (statusOperasional) where.statusOperasional = statusOperasional;
-
-  return await prisma.asetRuangan.findMany({
+  const asets = await prisma.asetRuangan.findMany({
     where,
     include: {
       ruangan: {
@@ -365,6 +364,13 @@ const getAsets = async (query = {}, user) => {
       { namaAset: 'asc' }
     ]
   });
+
+  if (isAlkesTindakan !== undefined) {
+    const isBool = isAlkesTindakan === 'true' || isAlkesTindakan === true;
+    return asets.filter(a => Boolean(a.isAlkesTindakan) === isBool);
+  }
+
+  return asets;
 };
 
 const getAsetById = async (id) => {
@@ -430,6 +436,8 @@ const createAset = async (data, user) => {
       tahunPerolehan: data.tahunPerolehan ? parseInt(data.tahunPerolehan, 10) : null,
       sumberAnggaran: data.sumberAnggaran || null,
       hargaPerolehan: data.hargaPerolehan ? parseFloat(data.hargaPerolehan) : 0,
+      tarifPemakaian: data.tarifPemakaian !== undefined ? parseFloat(data.tarifPemakaian) : 0,
+      isAlkesTindakan: Boolean(data.isAlkesTindakan),
       kondisiAset: data.kondisiAset || 'BAIK',
       statusOperasional: data.statusOperasional || 'AKTIF_DIGUNAKAN',
       kodeAspak: data.kodeAspak || null,
@@ -443,6 +451,8 @@ const updateAset = async (id, data) => {
   const payload = { ...data };
   if (data.tahunPerolehan) payload.tahunPerolehan = parseInt(data.tahunPerolehan, 10);
   if (data.hargaPerolehan !== undefined) payload.hargaPerolehan = parseFloat(data.hargaPerolehan);
+  if (data.tarifPemakaian !== undefined) payload.tarifPemakaian = parseFloat(data.tarifPemakaian);
+  if (data.isAlkesTindakan !== undefined) payload.isAlkesTindakan = Boolean(data.isAlkesTindakan);
 
   return await prisma.asetRuangan.update({
     where: { id },

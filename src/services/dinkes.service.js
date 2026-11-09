@@ -731,7 +731,7 @@ const getDiseaseSurveillance = async (query = {}) => {
 // 7. MASTER FASKES CRUD (MANAJEMEN PUSKESMAS SE-KABUPATEN)
 // ==========================================
 const getFaskesList = async (query = {}) => {
-  const { search, jenisFaskes, kecamatan, statusAktif } = query;
+  const { search, jenisFaskes, tingkatFaskes, kecamatan, statusAktif } = query;
   const where = {};
 
   if (search) {
@@ -742,6 +742,7 @@ const getFaskesList = async (query = {}) => {
     ];
   }
   if (jenisFaskes) where.jenisFaskes = jenisFaskes;
+  if (tingkatFaskes) where.tingkatFaskes = tingkatFaskes;
   if (kecamatan) where.kecamatan = { contains: kecamatan, mode: 'insensitive' };
   if (statusAktif !== undefined) where.statusAktif = statusAktif === 'true' || statusAktif === true;
 
@@ -769,10 +770,18 @@ const getFaskesList = async (query = {}) => {
   return faskesList.map(f => {
     const totalBedFisik = (f.ruangans || []).reduce((sum, r) => sum + (r.tempatTidurs?.length || 0), 0);
     const { ruangans, ...rest } = f;
+    const totalUsers = f._count?.users || 0;
+    const totalNakes = f._count?.tenagaMedis || 0;
+    const totalKunjungan = f._count?.kunjungans || 0;
+    const isTerintegrasiSikda = totalUsers > 0;
     return {
       ...rest,
       totalBedFisik,
-      kapasitasRawatInap: totalBedFisik
+      kapasitasRawatInap: totalBedFisik,
+      totalUsers,
+      totalNakes,
+      totalKunjungan,
+      isTerintegrasiSikda
     };
   });
 };
@@ -945,8 +954,8 @@ const getFaskesById = async (id) => {
 
   // 4. Analisis Farmasi, BMHP & Vaksin
   const allStok = faskes.stokObat || [];
-  const obatList = allStok.filter(s => s.obat?.kategori !== 'BMHP');
-  const bmhpList = allStok.filter(s => s.obat?.kategori === 'BMHP');
+  const obatList = allStok.filter(s => !((s.obat?.kategori || '').toUpperCase().includes('BMHP')));
+  const bmhpList = allStok.filter(s => (s.obat?.kategori || '').toUpperCase().includes('BMHP'));
 
   const obatKritis = obatList.filter(s => s.stok <= s.stokMinimum);
   const bmhpKritis = bmhpList.filter(s => s.stok <= s.stokMinimum);
@@ -1212,6 +1221,8 @@ const getFaskesById = async (id) => {
       jenisFaskes: faskes.jenisFaskes,
       kategoriWilayah: faskes.kategoriWilayah || 'PERKOTAAN',
       statusAktif: faskes.statusAktif,
+      totalUsers: (faskes.users || []).length,
+      isTerintegrasiSikda: (faskes.users || []).length > 0,
       alamat: faskes.alamat,
       kecamatan: faskes.kecamatan,
       desaKelurahan: faskes.desaKelurahan,

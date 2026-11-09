@@ -69,14 +69,17 @@ class WhatsAppService {
         if (qr) {
           this.qrCode = qr;
           this.status = 'QR_READY';
-          console.log('\n=========================================');
-          console.log('📲 [WHATSAPP GATEWAY] SCAN QR UNTUK TAUTKAN NOMOR:');
-          try {
-            qrcodeTerminal.generate(qr, { small: true });
-          } catch (e) {
-            console.log('QR Code String:', qr);
+          if (!this.qrLogged) {
+            this.qrLogged = true;
+            console.log('\n=========================================');
+            console.log('📲 [WHATSAPP GATEWAY] SCAN QR UNTUK TAUTKAN NOMOR:');
+            try {
+              qrcodeTerminal.generate(qr, { small: true });
+            } catch (e) {
+              console.log('QR Code String:', qr);
+            }
+            console.log('=========================================\n');
           }
-          console.log('=========================================\n');
         }
 
         if (connection === 'close') {

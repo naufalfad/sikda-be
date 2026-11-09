@@ -4,6 +4,7 @@ const satusehatService = require('./satusehat.service');
 const SatuSehatGateway = require('./satusehat/gateway.service');
 const { toRawatJalanBundle } = require('../utils/fhir-mappers');
 const kasirService = require('./kasir.service');
+const { catatFeePenangananDokter, autoCheckInDokterIfMissing } = require('../utils/fee.helper');
 const { addSatusehatSyncJob } = require('../queues/satusehat.queue');
 const { applyFaskesScope } = require('../utils/tenantScope');
 
@@ -452,7 +453,7 @@ const getRiwayatPasienByRM = async (noRM, user) => {
  * Mulai pemeriksaan: lock status → DIPERIKSA, buat RekamMedis DRAFT
  */
 const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
-  return await prisma.$transaction(async (tx) => {
+  const rekamMedisResult = await prisma.$transaction(async (tx) => {
     const kunjungan = await tx.kunjungan.findUnique({
       where: { id: kunjunganId },
       include: { rekamMedis: true, dokterTujuan: true },
@@ -527,6 +528,13 @@ const mulaiPemeriksaan = async (kunjunganId, dokterId) => {
 
     return rekamMedis;
   });
+
+  // Otomatis check-in dokter jika belum presensi pada shift saat ini
+  if (dokterId) {
+    autoCheckInDokterIfMissing(dokterId, null, new Date()).catch(err => console.warn(err));
+  }
+
+  return rekamMedisResult;
 };
 
 /**
@@ -641,16 +649,28 @@ const simpanTindakan = async (kunjunganId, user, tindakanArr) => {
     where: { kunjunganId },
   });
 
-  // Bulk create tindakan baru
+  // Bulk create tindakan baru beserta rincian BMHP & Alkes
   const created = await prisma.tindakanPasien.createMany({
-    data: tindakanArr.map((t) => ({
-      pasienId: kunjungan.pasienId,
-      kunjunganId,
-      icd9Id: t.icd9Id,
-      pelaksanaId: user.id,
-      pelaksanaTeks: t.pelaksana || (user.role === 'PERAWAT' ? 'Perawat' : 'Dokter'),
-      catatanTindakan: t.catatan || null,
-    })),
+    data: tindakanArr.map((t) => {
+      const isEksternal = t.tipePelaksanaan === 'EKSTERNAL';
+      let catatan = t.catatan || null;
+      if (isEksternal) {
+        const faskes = t.faskesRujukan ? t.faskesRujukan.trim() : 'Faskes Luar';
+        const alasan = t.alasanRujukan ? t.alasanRujukan.trim() : (t.catatan ? t.catatan.trim() : 'Pemeriksaan Penunjang Luar');
+        catatan = `[RUJUKAN PENUNJANG EKSTERNAL - ${faskes}]: ${alasan}`;
+      }
+
+      return {
+        pasienId: kunjungan.pasienId,
+        kunjunganId,
+        icd9Id: t.icd9Id,
+        pelaksanaId: user.id,
+        pelaksanaTeks: isEksternal ? 'Rujukan Luar' : (t.pelaksana || (user.role === 'PERAWAT' ? 'Perawat' : 'Dokter')),
+        catatanTindakan: catatan,
+        bmhpDetails: isEksternal ? null : (t.bmhpDetails || null),
+        alkesDetails: isEksternal ? null : (t.alkesDetails || null),
+      };
+    }),
   });
 
   return created;
@@ -1036,6 +1056,7 @@ const simpanResep = async (kunjunganId, user, resepArr) => {
     console.error(`[Kasir Error] Gagal generate tagihan:`, errTagihan.message);
   }
 
+  try { catatFeePenangananDokter(kunjunganId, user?.id); } catch (e) { console.error('[Fee Dokter Error]', e); }
   return result.resep;
 };
 

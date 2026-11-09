@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "seed:alkes-bmhp": "node prisma/seeders/seed-alkes-bmhp-lengkap.js",
+    "seed:pemeriksaan": "node prisma/seeders/seed-pemeriksaan-lengkap.js"
   },
   "keywords": [],
   "author": "",

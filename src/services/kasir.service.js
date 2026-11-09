@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const { applyFaskesScope } = require('../utils/tenantScope');
 const { kurangiStokObatFaskes } = require('../utils/stok.helper');
+const { catatFeePenangananDokter } = require('../utils/fee.helper');
 
 const getAntrianKasir = async (user) => {
   const where = {
@@ -42,14 +43,28 @@ const getAntrianKasir = async (user) => {
     where,
     include: {
       pasien: {
-        include: { penjamin: true }
+        include: { penjamin: true, alamat: true, kontak: true }
       },
       poliklinik: true,
       tagihan: {
         include: {
           details: true,
+          pembayaran: true,
         },
       },
+      orderLab: {
+        include: { details: true, dokter: true }
+      },
+      orderRadiologi: {
+        include: { details: true, hasil: true, dokter: true }
+      },
+      rujukanKeluar: {
+        include: { dokter: true }
+      },
+      rekamMedis: true,
+      diagnosis: {
+        include: { icd10: true }
+      }
     },
     orderBy: {
       tanggalRegistrasi: 'asc',
@@ -101,6 +116,9 @@ const calculateTagihanDetails = async (kunjunganId, options = {}) => {
       orderLab: {
         include: { details: true }
       },
+      orderRadiologi: {
+        include: { details: true }
+      },
       tagihan: {
         include: {
           pembayaran: true,
@@ -128,8 +146,9 @@ const calculateTagihanDetails = async (kunjunganId, options = {}) => {
     }
   }
 
+  const namaPoliDisplay = kunjungan.poliklinik?.namaPoli || (kunjungan.jenisPelayanan === 'UGD' ? 'UGD' : 'Umum');
   details.push({
-    namaItem: `Karcis & Konsultasi (${kunjungan.poliklinik?.namaPoli || 'Umum'})`,
+    namaItem: `Karcis & Konsultasi (${namaPoliDisplay})`,
     kategori: 'Pendaftaran',
     jumlah: 1,
     hargaSatuan: tarifPoli,
@@ -137,9 +156,25 @@ const calculateTagihanDetails = async (kunjunganId, options = {}) => {
   });
   totalBiayaKotor += tarifPoli;
 
-  // 2. Tindakan Medis (ICD-9)
+  // 2. Tindakan Medis (ICD-9), Sewa Alat Kesehatan, & BMHP Tindakan
   if (kunjungan.tindakans && kunjungan.tindakans.length > 0) {
     for (const t of kunjungan.tindakans) {
+      const isEksternal = 
+        t.tipePelaksanaan === 'EKSTERNAL' || 
+        (t.catatanTindakan && t.catatanTindakan.includes('[RUJUKAN PENUNJANG EKSTERNAL'));
+
+      if (isEksternal) {
+        details.push({
+          namaItem: `Rujukan Penunjang Eksternal: ${t.icd9?.nama_prosedur || 'Pemeriksaan Diagnostik Luar'} (Bebas Biaya / Rp 0)`,
+          kategori: 'Rujukan Eksternal',
+          jumlah: 1,
+          hargaSatuan: 0,
+          subTotal: 0,
+        });
+        continue;
+      }
+
+      // 2a. Jasa Tindakan Medis Dokter/Perawat
       let tarifTindakan = 50000;
       if (kunjungan.poliklinik && kunjungan.poliklinik.layananKliniks.length > 0) {
         const foundLayanan = kunjungan.poliklinik.layananKliniks.find(
@@ -151,13 +186,47 @@ const calculateTagihanDetails = async (kunjunganId, options = {}) => {
       }
 
       details.push({
-        namaItem: `Tindakan: ${t.icd9?.nama_prosedur || 'Prosedur Medis'}`,
+        namaItem: `Tindakan: ${t.icd9?.nama_prosedur || 'Prosedur Medis'} (${t.pelaksanaTeks || 'Dokter'})`,
         kategori: 'Tindakan',
         jumlah: 1,
         hargaSatuan: tarifTindakan,
         subTotal: tarifTindakan,
       });
       totalBiayaKotor += tarifTindakan;
+
+      // 2b. Tarif Pemakaian Alat Kesehatan (Alkes Non-BMHP: EKG, Nebulizer, USG, Set Bedah Minor, dll)
+      const alkesList = Array.isArray(t.alkesDetails) ? t.alkesDetails : (typeof t.alkesDetails === 'string' ? JSON.parse(t.alkesDetails || '[]') : []);
+      if (alkesList.length > 0) {
+        for (const alkes of alkesList) {
+          const tarifAlkes = Number(alkes.tarifPemakaian) || 0;
+          details.push({
+            namaItem: `Pemakaian Alkes: ${alkes.namaAset || 'Alat Kesehatan Medis'}`,
+            kategori: 'Alat Kesehatan',
+            jumlah: 1,
+            hargaSatuan: tarifAlkes,
+            subTotal: tarifAlkes,
+          });
+          totalBiayaKotor += tarifAlkes;
+        }
+      }
+
+      // 2c. Pemakaian Bahan Medis Habis Pakai (BMHP: Spuit, Benang Jahit, Kasa, Lidocaine, dll)
+      const bmhpList = Array.isArray(t.bmhpDetails) ? t.bmhpDetails : (typeof t.bmhpDetails === 'string' ? JSON.parse(t.bmhpDetails || '[]') : []);
+      if (bmhpList.length > 0) {
+        for (const bmhp of bmhpList) {
+          const qty = Number(bmhp.jumlah) || 1;
+          const harga = Number(bmhp.hargaSatuan) || 0;
+          const subTotalBmhp = Number(bmhp.subTotal) || (qty * harga);
+          details.push({
+            namaItem: `BMHP: ${bmhp.namaItem || 'Bahan Medis'} (${qty} ${bmhp.sediaan || 'unit'})`,
+            kategori: 'BMHP',
+            jumlah: qty,
+            hargaSatuan: harga,
+            subTotal: subTotalBmhp,
+          });
+          totalBiayaKotor += subTotalBmhp;
+        }
+      }
     }
   }
 
@@ -314,8 +383,12 @@ const calculateTagihanDetails = async (kunjunganId, options = {}) => {
   }
 
   // 6. Pemeriksaan Laboratorium (Tarif Retribusi Perda FKTP)
+  // Abaikan item lab rujukan luar (isRujukanLuar: true) karena pasien membayar di faskes luar (Labkesda/RSUD)
   if (kunjungan.orderLab && kunjungan.orderLab.details && kunjungan.orderLab.details.length > 0) {
     for (const itemLab of kunjungan.orderLab.details) {
+      if (itemLab.isRujukanLuar) {
+        continue;
+      }
       const p = (itemLab.parameter || '').toLowerCase();
       let tarifLab = 20000; // Default retribusi lab FKTP
 
@@ -349,6 +422,30 @@ const calculateTagihanDetails = async (kunjunganId, options = {}) => {
         subTotal: tarifLab,
       });
       totalBiayaKotor += tarifLab;
+    }
+  }
+
+  // 6b. Pemeriksaan Radiologi (Tarif Retribusi Perda FKTP)
+  // Di FKTP Puskesmas, seluruh pemeriksaan radiologi rontgen/CT-Scan merupakan Rujukan Eksternal
+  // (isRujukanLuar === true), sehingga Rp 0 di Puskesmas. Hanya ditagih jika faskes memiliki instalasi radiologi internal.
+  if (kunjungan.orderRadiologi && !kunjungan.orderRadiologi.isRujukanLuar && kunjungan.orderRadiologi.details && kunjungan.orderRadiologi.details.length > 0) {
+    for (const itemRad of kunjungan.orderRadiologi.details) {
+      const p = (itemRad.namaPemeriksaan || '').toLowerCase();
+      let tarifRad = 50000; // Default retribusi radiologi FKTP
+      if (p.includes('ct') || p.includes('computed tomography')) tarifRad = 150000;
+      else if (p.includes('usg') || p.includes('ultrasonografi')) tarifRad = 60000;
+      else if (p.includes('thorax') || p.includes('dada')) tarifRad = 50000;
+      else if (p.includes('ekstremitas') || p.includes('tulang')) tarifRad = 50000;
+      else if (p.includes('abdomen') || p.includes('perut')) tarifRad = 55000;
+
+      details.push({
+        namaItem: `Radiologi: ${itemRad.namaPemeriksaan}`,
+        kategori: 'Radiologi',
+        jumlah: 1,
+        hargaSatuan: tarifRad,
+        subTotal: tarifRad,
+      });
+      totalBiayaKotor += tarifRad;
     }
   }
 
@@ -435,8 +532,27 @@ const generateTagihan = async (kunjunganId, options = {}) => {
     },
     include: {
       details: true,
+      pembayaran: true,
       kunjungan: {
-        include: { pasien: true },
+        include: {
+          pasien: {
+            include: { penjamin: true, alamat: true, kontak: true }
+          },
+          poliklinik: true,
+          orderLab: {
+            include: { details: true, dokter: true }
+          },
+          orderRadiologi: {
+            include: { details: true, hasil: true, dokter: true }
+          },
+          rujukanKeluar: {
+            include: { dokter: true }
+          },
+          rekamMedis: true,
+          diagnosis: {
+            include: { icd10: true }
+          }
+        },
       },
     },
   });
@@ -451,8 +567,23 @@ const getTagihan = async (tagihanId) => {
       details: true,
       kunjungan: {
         include: {
-          pasien: true,
+          pasien: {
+            include: { penjamin: true, alamat: true, kontak: true }
+          },
           poliklinik: true,
+          orderLab: {
+            include: { details: true, dokter: true }
+          },
+          orderRadiologi: {
+            include: { details: true, hasil: true, dokter: true }
+          },
+          rujukanKeluar: {
+            include: { dokter: true }
+          },
+          rekamMedis: true,
+          diagnosis: {
+            include: { icd10: true }
+          }
         },
       },
       pembayaran: true,
@@ -469,6 +600,7 @@ const prosesPembayaran = async (tagihanId, userId, data) => {
       kunjungan: {
         include: {
           poliklinik: true,
+          tindakans: true,
           resep: {
             include: {
               details: {
@@ -508,10 +640,35 @@ const prosesPembayaran = async (tagihanId, userId, data) => {
       },
     });
 
-    // 2. Update Tagihan jadi LUNAS
+    // 2. Update Tagihan jadi LUNAS beserta relasi lengkap untuk cetak dokumen
     const updatedTagihan = await tx.tagihan.update({
       where: { id: tagihanId },
       data: { statusTagihan: 'LUNAS' },
+      include: {
+        details: true,
+        pembayaran: true,
+        kunjungan: {
+          include: {
+            pasien: {
+              include: { penjamin: true, alamat: true, kontak: true }
+            },
+            poliklinik: true,
+            orderLab: {
+              include: { details: true, dokter: true }
+            },
+            orderRadiologi: {
+              include: { details: true, hasil: true, dokter: true }
+            },
+            rujukanKeluar: {
+              include: { dokter: true }
+            },
+            rekamMedis: true,
+            diagnosis: {
+              include: { icd10: true }
+            }
+          },
+        },
+      }
     });
 
     // 3. Integrasi Pemotongan Stok Obat, Vaksin & BMHP Faskes (Auto-FEFO)
@@ -535,11 +692,39 @@ const prosesPembayaran = async (tagihanId, userId, data) => {
       }
     }
 
+    // 3b. Integrasi Pemotongan Stok BMHP Tindakan Medis (Auto-FEFO)
+    if (targetFaskesId && tagihan.kunjungan?.tindakans && tagihan.kunjungan.tindakans.length > 0) {
+      for (const t of tagihan.kunjungan.tindakans) {
+        const isEksternal = 
+          t.tipePelaksanaan === 'EKSTERNAL' || 
+          (t.catatanTindakan && t.catatanTindakan.includes('[RUJUKAN PENUNJANG EKSTERNAL'));
+        if (isEksternal) continue;
+
+        const bmhpList = Array.isArray(t.bmhpDetails) ? t.bmhpDetails : (typeof t.bmhpDetails === 'string' ? JSON.parse(t.bmhpDetails || '[]') : []);
+        if (bmhpList.length > 0) {
+          for (const b of bmhpList) {
+            if (b.obatId && b.jumlah > 0) {
+              await kurangiStokObatFaskes(tx, {
+                faskesId: targetFaskesId,
+                obatId: b.obatId,
+                jumlah: b.jumlah,
+                referensi: `TINDAKAN-${tagihan.kunjungan.noAntrian || tagihan.kunjungan.id.slice(-6)}`,
+                keterangan: `BMHP Tindakan: ${b.namaItem || 'Bahan Medis'} (${t.icd9?.nama_prosedur || 'Prosedur'})`,
+                petugasId: userId,
+              });
+            }
+          }
+        }
+      }
+    }
+
     // 4. Selesaikan kunjungan di Kasir
     await tx.kunjungan.update({
       where: { id: tagihan.kunjunganId },
       data: { statusKunjungan: 'SELESAI' },
     });
+
+    try { await catatFeePenangananDokter(tagihan.kunjunganId); } catch (e) { console.error('[Kasir Fee Dokter Error]', e); }
 
     return updatedTagihan;
   });

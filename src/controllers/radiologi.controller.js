@@ -65,6 +65,20 @@ const radiologiController = {
       next(error);
     }
   },
+  // 5. POST /api/radiologi/order/:id/hasil-rujukan (Input hasil rujukan fisik dari RS luar)
+  submitHasilRujukanLuar: async (req, res, next) => {
+    try {
+      const { id } = req.params;
+      const result = await radiologiService.simpanHasilRujukanLuar(id, req.body);
+      res.status(200).json({
+        success: true,
+        message: 'Hasil rujukan pemeriksaan radiologi berhasil disimpan',
+        data: result
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
 };
 
 module.exports = radiologiController;

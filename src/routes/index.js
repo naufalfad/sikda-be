@@ -14,20 +14,22 @@ const farmasiRoute = require('./farmasi.routes');
 const laboratoriumRoute = require('./laboratorium.routes');
 const kasirRoute = require('./kasir.route');
 const ukmRoute = require('./ukm.route');
-const radiologiRoute = require('./radiologi.routes'); // [BARU] Import module radiologi
+const radiologiRoute = require('./radiologi.routes');
 const satusehatRoute = require('./satusehat.routes');
-const bpjsRoute = require('./bpjs.routes'); // [BARU] Import module BPJS PCare
-const referensiRoute = require('./referensi.routes'); // [BARU] Import module Referensi Enum
+const bpjsRoute = require('./bpjs.routes');
+const referensiRoute = require('./referensi.routes');
 const kodeposRoute = require('./kodepos.routes');
 const rujukanRoute = require('./rujukan.routes');
 const asetRuanganRoute = require('./asetRuangan.routes');
-const router = express.Router();
 const imunisasiRoute = require('./imunisasi.routes');
-
 const dinkesRoute = require('./dinkes.routes');
 const portalPasienRoute = require('./portalPasien.routes');
 const virtualAssistantRoute = require('./virtualAssistant.routes');
 const ugdRoute = require('./ugd.routes');
+const remunerasiRoute = require('./remunerasi.routes');
+const laporanRoute = require('./laporan.routes');
+
+const router = express.Router();
 
 const defaultRoutes = [
   {
@@ -95,7 +97,7 @@ const defaultRoutes = [
     route: ukmRoute,
   },
   {
-    path: '/radiologi', 
+    path: '/radiologi',
     route: radiologiRoute,
   },
   {
@@ -137,7 +139,15 @@ const defaultRoutes = [
   {
     path: '/virtual-assistant',
     route: virtualAssistantRoute,
-  }
+  },
+  {
+    path: '/remunerasi',
+    route: remunerasiRoute,
+  },
+  {
+    path: '/laporan',
+    route: laporanRoute,
+  },
 ];
 
 defaultRoutes.forEach((route) => {

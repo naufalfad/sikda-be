@@ -1,6 +1,8 @@
 const express = require('express');
 const ugdController = require('../controllers/ugd.controller');
-const { protect } = require('../middlewares/auth.middleware');
+const { protect, restrictTo } = require('../middlewares/auth.middleware');
+
+const DOCTOR_OR_ADMIN = ['DOKTER', 'DOKTER_UGD', 'ADMIN', 'SUPERADMIN'];
 
 const router = express.Router();
 
@@ -24,7 +26,7 @@ router.post('/triase/:id', ugdController.updateTriaseObservasi);
 router.put('/triase/:id', ugdController.updateTriaseObservasi);
 
 // Route Simpan Pemeriksaan & Discharge (mendukung format /:id/pemeriksaan dan /pemeriksaan/:id)
-router.post('/:id/pemeriksaan', ugdController.simpanPemeriksaanUGD);
-router.post('/pemeriksaan/:id', ugdController.simpanPemeriksaanUGD);
+router.post('/:id/pemeriksaan', restrictTo(...DOCTOR_OR_ADMIN), ugdController.simpanPemeriksaanUGD);
+router.post('/pemeriksaan/:id', restrictTo(...DOCTOR_OR_ADMIN), ugdController.simpanPemeriksaanUGD);
 
 module.exports = router;
