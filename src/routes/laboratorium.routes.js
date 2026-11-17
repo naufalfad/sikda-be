@@ -11,5 +11,6 @@ router.get('/antrian', laboratoriumController.getAntrian);
 router.get('/order/kunjungan/:kunjunganId', laboratoriumController.getOrderByKunjungan);
 router.get('/riwayat-pasien/:pasienId', laboratoriumController.getRiwayatLabByPasien);
 router.put('/order/:id/hasil', laboratoriumController.simpanHasil);
+router.delete('/order/:id', laboratoriumController.deleteOrder);
 
 module.exports = router;

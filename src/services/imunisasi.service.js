@@ -1,6 +1,7 @@
 const prisma = require('../config/prisma');
 const kasirService = require('./kasir.service');
 const { catatMutasiStok } = require('../utils/mutasiStok.helper');
+const { kurangiStokObatFaskes } = require('../utils/stok.helper');
 
 const imunisasiService = {
     /**
@@ -44,12 +45,13 @@ const imunisasiService = {
     },
 
     /**
-     * LOGIKA INTI: Mencatat Riwayat Imunisasi & Memotong Stok Batch
+     * LOGIKA INTI: Mencatat Riwayat Imunisasi, Memotong Stok Batch & BMHP yang Digunakan
      */
-    catatRiwayat: async (data, petugasId) => {
+    catatRiwayat: async (data, petugasId, currentUser = null) => {
         const {
             pasienId, kunjunganId, batchVaksinId, isRiwayatLuar,
-            dosisKe, dosisJumlah, lokasiSuntik, ruteSuntik, catatan, tanggalSuntik
+            dosisKe, dosisJumlah, lokasiSuntik, ruteSuntik, catatan, tanggalSuntik,
+            bmhpDetails
         } = data;
 
         // VALIDASI ARSITEKTUR: Jika bukan riwayat dari luar, Kunjungan (Encounter) wajib ada!
@@ -69,6 +71,34 @@ const imunisasiService = {
             if (!batch) throw new Error('Data Batch Vaksin tidak ditemukan.');
             if (!isRiwayatLuar && batch.stok < 1) throw new Error(`Stok vaksin ${batch.vaksin?.namaVaksin || ''} untuk batch ini sudah habis.`);
 
+            // 1b. Resolusi Petugas Pelaksana (Mencegah ReferenceError & menjaga integritas relasi foreign key)
+            let validPetugasId = null;
+            let finalPetugasNama = currentUser?.namaLengkap || 'Petugas Imunisasi';
+
+            const candidatePetugasId = data.petugasId || petugasId;
+            if (candidatePetugasId) {
+                const userPetugas = await tx.user.findUnique({
+                    where: { id: candidatePetugasId },
+                    select: { id: true, namaLengkap: true, username: true }
+                });
+                if (userPetugas) {
+                    validPetugasId = userPetugas.id;
+                    finalPetugasNama = userPetugas.namaLengkap || userPetugas.username || finalPetugasNama;
+                }
+            }
+
+            // 1c. Ringkasan Penggunaan BMHP dalam Catatan Rekam Medis
+            let finalCatatan = catatan || '';
+            if (Array.isArray(bmhpDetails) && bmhpDetails.length > 0) {
+                const bmhpSummary = bmhpDetails
+                    .filter(b => b && Number(b.jumlah) > 0)
+                    .map(b => `${b.namaItem} (${b.jumlah} ${b.sediaan || 'pcs'})`)
+                    .join(', ');
+                if (bmhpSummary) {
+                    finalCatatan = `[BMHP: ${bmhpSummary}] ${finalCatatan}`.trim();
+                }
+            }
+
             // 2. Buat Riwayat Imunisasi
             const riwayat = await tx.riwayatImunisasi.create({
                 data: {
@@ -81,8 +111,8 @@ const imunisasiService = {
                     dosisJumlah: dosisJumlah ? parseFloat(dosisJumlah) : null,
                     lokasiSuntik,
                     ruteSuntik,
-                    petugasId: isRiwayatLuar ? null : petugasId, // Petugas hanya relevan jika disuntik di RS kita
-                    catatan,
+                    petugasId: isRiwayatLuar ? null : validPetugasId,
+                    catatan: finalCatatan,
                 },
                 include: {
                     batchVaksin: {
@@ -93,6 +123,7 @@ const imunisasiService = {
 
             // 3. Kurangi stok vaksin HANYA JIKA disuntik di Puskesmas kita
             if (!isRiwayatLuar) {
+                // Potong stok vaksin fisik di Cold-Chain
                 const updatedBatch = await tx.batchVaksin.update({
                     where: { id: batchVaksinId },
                     data: { stok: batch.stok - 1 },
@@ -113,9 +144,48 @@ const imunisasiService = {
                     stokAkhir: updatedBatch.stok,
                     referensi: `IMUNISASI-${kunjunganId ? kunjunganId.slice(-6) : riwayat.id.slice(-6)}`,
                     keterangan: `Pelayanan Imunisasi Pasien (Dosis ke-${dosisKe || 1})`,
-                    petugasId: petugasId || null,
-                    petugasNama: petugas?.namaLengkap || 'Petugas Imunisasi'
+                    petugasId: validPetugasId,
+                    petugasNama: finalPetugasNama
                 });
+
+                // Potong stok BMHP yang terintegrasi (Spuit, Alcohol Swab, Jarum, Plester)
+                if (batch.faskesId && Array.isArray(bmhpDetails) && bmhpDetails.length > 0) {
+                    for (const b of bmhpDetails) {
+                        const qty = parseInt(b.jumlah, 10);
+                        if (qty > 0) {
+                            let targetObatId = b.obatId;
+                            // Jika obatId dummy preset seperti 'BMHP-...', cocokkan ke MasterObat database
+                            if (!targetObatId || targetObatId.startsWith('BMHP-')) {
+                                const foundObat = await tx.masterObat.findFirst({
+                                    where: {
+                                        OR: [
+                                            { kodeObat: b.obatId || b.namaItem },
+                                            { namaObat: { contains: b.namaItem, mode: 'insensitive' } },
+                                            { namaObat: { contains: (b.namaItem || '').split(' ')[0], mode: 'insensitive' } }
+                                        ]
+                                    }
+                                });
+                                if (foundObat) targetObatId = foundObat.id;
+                            }
+
+                            if (targetObatId) {
+                                try {
+                                    await kurangiStokObatFaskes(tx, {
+                                        faskesId: batch.faskesId,
+                                        obatId: targetObatId,
+                                        jumlah: qty,
+                                        referensi: `IMUNISASI-${kunjunganId ? kunjunganId.slice(-6) : riwayat.id.slice(-6)}`,
+                                        keterangan: `Penggunaan BMHP Imunisasi (${batch.vaksin?.namaVaksin || 'Vaksin'}) - ${b.namaItem}`,
+                                        petugasId: validPetugasId,
+                                        petugasNama: finalPetugasNama
+                                    });
+                                } catch (errBmhp) {
+                                    console.warn(`[BMHP Imunisasi Warning] Gagal potong stok BMHP ${b.namaItem}:`, errBmhp.message);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             return riwayat;

@@ -25,7 +25,41 @@ async function main() {
       titikGps: '-6.4812,106.8524',
       targetKunjunganHarian: 150,
       jumlahPendudukWilayah: 68000,
-      statusAktif: true
+      statusAktif: true,
+      labInternalParams: [
+        'Hematologi Rutin/CBC',
+        'Hematologi Lengkap (CBC, LED, Hitung Jenis)',
+        'Hemoglobin',
+        'Hematokrit',
+        'Leukosit',
+        'Trombosit',
+        'Eritrosit',
+        'LED',
+        'Golongan Darah A,B,O & Rh',
+        'Glukosa Sewaktu',
+        'Glukosa Puasa',
+        'Glukosa 2 Jam PP',
+        'Cholesterol Total',
+        'Trigliserida',
+        'Cholesterol HDL',
+        'Cholesterol LDL Direk',
+        'Asam Urat',
+        'Ureum',
+        'Kreatinin',
+        'SGOT',
+        'SGPT',
+        'Urine Rutin',
+        'Faeces Rutin',
+        'Darah Samar (FIT)',
+        'Tes Kehamilan Plano Test / hCG Urine',
+        'Widal',
+        'Dengue NS1 Antigen',
+        'Rapid Test HIV (SatuSehat)',
+        'HBsAg Rapid Test'
+      ],
+      radiologiInternalLoinc: ['24558-9'], // USG Abdomen tersedia internal
+      defaultLabRujukan: 'UPT Labkesda Kabupaten Bogor / RSUD Cibinong',
+      defaultRadRujukan: 'Instalasi Radiologi RSUD Cibinong'
     },
     create: {
       kodeFaskes: 'P3201010101',
@@ -39,7 +73,41 @@ async function main() {
       targetKunjunganHarian: 150,
       jumlahPendudukWilayah: 68000,
       statusAktif: true,
-      ihsOrganizationId: 'Org-Cibinong-01'
+      ihsOrganizationId: 'Org-Cibinong-01',
+      labInternalParams: [
+        'Hematologi Rutin/CBC',
+        'Hematologi Lengkap (CBC, LED, Hitung Jenis)',
+        'Hemoglobin',
+        'Hematokrit',
+        'Leukosit',
+        'Trombosit',
+        'Eritrosit',
+        'LED',
+        'Golongan Darah A,B,O & Rh',
+        'Glukosa Sewaktu',
+        'Glukosa Puasa',
+        'Glukosa 2 Jam PP',
+        'Cholesterol Total',
+        'Trigliserida',
+        'Cholesterol HDL',
+        'Cholesterol LDL Direk',
+        'Asam Urat',
+        'Ureum',
+        'Kreatinin',
+        'SGOT',
+        'SGPT',
+        'Urine Rutin',
+        'Faeces Rutin',
+        'Darah Samar (FIT)',
+        'Tes Kehamilan Plano Test / hCG Urine',
+        'Widal',
+        'Dengue NS1 Antigen',
+        'Rapid Test HIV (SatuSehat)',
+        'HBsAg Rapid Test'
+      ],
+      radiologiInternalLoinc: ['24558-9'],
+      defaultLabRujukan: 'UPT Labkesda Kabupaten Bogor / RSUD Cibinong',
+      defaultRadRujukan: 'Instalasi Radiologi RSUD Cibinong'
     }
   });
 
@@ -55,7 +123,19 @@ async function main() {
       titikGps: '-6.5891,106.9934',
       targetKunjunganHarian: 40,
       jumlahPendudukWilayah: 24000,
-      statusAktif: true
+      statusAktif: true,
+      labInternalParams: [
+        'Glukosa Sewaktu',
+        'Asam Urat',
+        'Cholesterol Total',
+        'Urine Rutin',
+        'Tes Kehamilan Plano Test / hCG Urine',
+        'Golongan Darah A,B,O & Rh',
+        'Hemoglobin'
+      ],
+      radiologiInternalLoinc: [], // Rujuk luar semua karena faskes non-rawat inap terpencil
+      defaultLabRujukan: 'UPT Labkesda Kabupaten Bogor / Puskesmas Cibinong Raya',
+      defaultRadRujukan: 'Instalasi Radiologi RSUD Cibinong / RSUD Cileungsi'
     },
     create: {
       kodeFaskes: 'P3201010202',
@@ -69,7 +149,19 @@ async function main() {
       targetKunjunganHarian: 40,
       jumlahPendudukWilayah: 24000,
       statusAktif: true,
-      ihsOrganizationId: 'Org-Sukamakmur-02'
+      ihsOrganizationId: 'Org-Sukamakmur-02',
+      labInternalParams: [
+        'Glukosa Sewaktu',
+        'Asam Urat',
+        'Cholesterol Total',
+        'Urine Rutin',
+        'Tes Kehamilan Plano Test / hCG Urine',
+        'Golongan Darah A,B,O & Rh',
+        'Hemoglobin'
+      ],
+      radiologiInternalLoinc: [],
+      defaultLabRujukan: 'UPT Labkesda Kabupaten Bogor / Puskesmas Cibinong Raya',
+      defaultRadRujukan: 'Instalasi Radiologi RSUD Cibinong / RSUD Cileungsi'
     }
   });
 

@@ -68,6 +68,11 @@ model User {
   // Relasi Presensi & Fee Tenaga Medis
   presensiNakes        PresensiNakes[]        @relation("UserPresensi")
   feePenangananDokter  LogFeeDokter[]         @relation("DokterFeePenanganan")
+
+  // Relasi Jadwal & Izin/Cuti Dinas Nakes
+  jadwalNakes          JadwalNakes[]          @relation("UserJadwalNakes")
+  izinCutiNakes        IzinCutiNakes[]        @relation("UserIzinCuti")
+  substitusiPengganti  IzinCutiNakes[]        @relation("NakesPengganti")
 }
 
 // 1. Data Induk Pasien
@@ -547,6 +552,12 @@ model MasterICD9 {
   nama_prosedur String
   kategori      String
 
+  // Paket Template Klinis Tindakan (BMHP, Alkes, Obat, Penunjang)
+  tarifTindakan     Float? @default(0)
+  templateBmhp      Json? // Array of { obatId, namaItem, sediaan, jumlah, hargaSatuan }
+  templateAlkes     Json? // Array of { asetId, namaAset, kodeAset, tarifPemakaian }
+  templatePenunjang Json? // Array of { jenis: 'LAB' | 'RADIOLOGI', id, nama, kode, catatan }
+
   tindakans TindakanPasien[]
 
   createdAt DateTime @default(now())
@@ -616,6 +627,7 @@ model Poliklinik {
   dokters        User[]          @relation("DokterPoliklinik")
   ruangans       MasterRuangan[] @relation("PoliRuangan")
   bookingsOnline BookingAntreanOnline[]
+  jadwalNakes    JadwalNakes[]   @relation("PoliJadwalNakes")
 
   @@unique([faskesId, kodePoli])
 }
@@ -1602,6 +1614,12 @@ model Faskes {
   ketersediaanAmbulance  Int?      @default(0) // Jumlah armada ambulance siaga
   jenisAmbulance         String?   // PASIEN_GAWAT_DARURAT, JENAZAH, TRANSPORT_MEDIS
 
+  // Kapabilitas Diagnostik Mandiri Faskes (Per-Faskes Override)
+  labInternalParams      String[]  @default([])
+  radiologiInternalLoinc String[]  @default([])
+  defaultLabRujukan      String?   @default("UPT Labkesda Kabupaten / RSUD Terdekat")
+  defaultRadRujukan      String?   @default("Instalasi Radiologi RSUD Terdekat")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1625,6 +1643,10 @@ model Faskes {
   masterTarifFee    MasterTarifFee?
   presensiNakes     PresensiNakes[]
   logFeeDokter      LogFeeDokter[]
+
+  // Relasi Jadwal & Izin/Cuti Dinas Nakes
+  jadwalNakes       JadwalNakes[]
+  izinCutiNakes     IzinCutiNakes[]
 }
 
 // ==========================================
@@ -1892,4 +1914,65 @@ model LogFeeDokter {
   @@index([faskesId, tanggalPelayanan])
   @@index([dokterId, statusPembayaran])
 }
+
+// ==========================================
+// JADWAL & ROSTER DINAS TENAGA MEDIS (DOKTER / PERAWAT)
+// ==========================================
+model JadwalNakes {
+  id           String      @id @default(cuid())
+  userId       String
+  user         User        @relation("UserJadwalNakes", fields: [userId], references: [id], onDelete: Cascade)
+  
+  poliklinikId String?
+  poliklinik   Poliklinik? @relation("PoliJadwalNakes", fields: [poliklinikId], references: [id], onDelete: SetNull)
+
+  faskesId     String?
+  faskes       Faskes?     @relation(fields: [faskesId], references: [id], onDelete: Cascade)
+
+  hari         String      // "SENIN", "SELASA", "RABU", "KAMIS", "JUMAT", "SABTU", "MINGGU"
+  shift        String      @default("PAGI") // "PAGI", "SIANG", "MALAM"
+  jamMulai     String      @default("08:00") // Format "HH:mm"
+  jamSelesai   String      @default("14:00") // Format "HH:mm"
+  kuotaPasien  Int         @default(40)
+  statusAktif  Boolean     @default(true)
+  catatan      String?
+
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([userId, hari, shift, poliklinikId])
+  @@index([userId, hari])
+  @@index([poliklinikId, hari])
+  @@index([faskesId, hari])
+}
+
+// ==========================================
+// IZIN, CUTI, SAKIT, & PENGGANTI DINAS NAKES
+// ==========================================
+model IzinCutiNakes {
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation("UserIzinCuti", fields: [userId], references: [id], onDelete: Cascade)
+
+  faskesId           String?
+  faskes             Faskes?   @relation(fields: [faskesId], references: [id], onDelete: Cascade)
+
+  tanggalMulai       DateTime  @db.Date
+  tanggalSelesai     DateTime  @db.Date
+  tipeIzin           String    // "CUTI", "IZIN", "SAKIT", "TUGAS_LUAR", "PELATIHAN"
+  keterangan         String?
+
+  penggantiId        String?
+  pengganti          User?     @relation("NakesPengganti", fields: [penggantiId], references: [id], onDelete: SetNull)
+
+  statusPersetujuan  String    @default("DISETUJUI") // "PENDING", "DISETUJUI", "DITOLAK"
+  catatanPersetujuan String?
+
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([userId, tanggalMulai, tanggalSelesai])
+  @@index([faskesId, tanggalMulai])
+}
+
 

@@ -35,13 +35,42 @@ const getAllICD9 = async () => {
 };
 
 const createICD9 = async (data) => {
-  return await prisma.masterICD9.create({ data });
+  const {
+    kode_icd9,
+    nama_prosedur,
+    kategori,
+    tarifTindakan,
+    templateBmhp,
+    templateAlkes,
+    templatePenunjang
+  } = data;
+
+  return await prisma.masterICD9.create({
+    data: {
+      kode_icd9: kode_icd9 ? kode_icd9.trim() : '',
+      nama_prosedur: nama_prosedur ? nama_prosedur.trim() : '',
+      kategori: kategori || 'Umum',
+      tarifTindakan: tarifTindakan !== undefined && tarifTindakan !== null ? parseFloat(tarifTindakan) || 0 : 0,
+      templateBmhp: templateBmhp !== undefined ? templateBmhp : null,
+      templateAlkes: templateAlkes !== undefined ? templateAlkes : null,
+      templatePenunjang: templatePenunjang !== undefined ? templatePenunjang : null
+    }
+  });
 };
 
 const updateICD9 = async (id, data) => {
+  const updateData = {};
+  if (data.kode_icd9 !== undefined) updateData.kode_icd9 = data.kode_icd9 ? data.kode_icd9.trim() : '';
+  if (data.nama_prosedur !== undefined) updateData.nama_prosedur = data.nama_prosedur ? data.nama_prosedur.trim() : '';
+  if (data.kategori !== undefined) updateData.kategori = data.kategori;
+  if (data.tarifTindakan !== undefined) updateData.tarifTindakan = data.tarifTindakan !== null ? parseFloat(data.tarifTindakan) || 0 : 0;
+  if (data.templateBmhp !== undefined) updateData.templateBmhp = data.templateBmhp;
+  if (data.templateAlkes !== undefined) updateData.templateAlkes = data.templateAlkes;
+  if (data.templatePenunjang !== undefined) updateData.templatePenunjang = data.templatePenunjang;
+
   return await prisma.masterICD9.update({
     where: { id_icd9: id },
-    data
+    data: updateData
   });
 };
 

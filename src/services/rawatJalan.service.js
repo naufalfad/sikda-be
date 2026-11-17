@@ -7,6 +7,7 @@ const kasirService = require('./kasir.service');
 const { catatFeePenangananDokter, autoCheckInDokterIfMissing } = require('../utils/fee.helper');
 const { addSatusehatSyncJob } = require('../queues/satusehat.queue');
 const { applyFaskesScope } = require('../utils/tenantScope');
+const { kurangiStokObatFaskes } = require('../utils/stok.helper');
 
 /**
  * Helper to extract Observation vital signs from screening record
@@ -963,12 +964,17 @@ const simpanResep = async (kunjunganId, user, resepArr) => {
 
   const result = await prisma.$transaction(async (tx) => {
     // Hapus resep yang masih MENUNGGU_FARMASI sebelumnya jika ada, agar resep tidak ganda/stale
+    // PENTING: Jangan hapus resep Obat Pulang ([Obat Pulang]) jika sudah dibuat saat discharge
     const oldReseps = await tx.resep.findMany({
-      where: { kunjunganId, status: 'MENUNGGU_FARMASI' }
+      where: { kunjunganId, status: 'MENUNGGU_FARMASI' },
+      include: { details: true },
     });
     for (const old of oldReseps) {
-      await tx.resepDetail.deleteMany({ where: { resepId: old.id } });
-      await tx.resep.delete({ where: { id: old.id } });
+      const isObatPulang = old.details?.some(d => d.catatan && d.catatan.includes('[Obat Pulang]'));
+      if (!isObatPulang) {
+        await tx.resepDetail.deleteMany({ where: { resepId: old.id } });
+        await tx.resep.delete({ where: { id: old.id } });
+      }
     }
 
     // Buat record Resep
@@ -1058,6 +1064,128 @@ const simpanResep = async (kunjunganId, user, resepArr) => {
 
   try { catatFeePenangananDokter(kunjunganId, user?.id); } catch (e) { console.error('[Fee Dokter Error]', e); }
   return result.resep;
+};
+
+/**
+ * Simpan Terapi Obat / BMHP Diberikan Langsung di Ruangan Rawat Inap (CPPT Bedside Administration)
+ * Obat langsung dicatat sebagai DIBERIKAN_DIRUANGAN, stok faskes dipotong seketika via Auto-FEFO,
+ * dan TIDAK PERNAH masuk antrian loket farmasi / apoteker penyerahan obat pulang.
+ */
+const simpanTerapiRuangan = async (kunjunganId, user, resepArr) => {
+  const kunjungan = await prisma.kunjungan.findUnique({
+    where: { id: kunjunganId },
+    include: {
+      pasien: true,
+      dokterTujuan: { include: { tenagaMedis: true } },
+      poliklinik: true,
+    }
+  });
+
+  if (!kunjungan) {
+    const err = new Error('Data kunjungan tidak ditemukan');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const dokterId = user.role?.includes('DOKTER') ? user.id : (kunjungan.dokterTujuanId || user.id);
+  const penginputId = user.role === 'PERAWAT' ? user.id : null;
+  const targetFaskesId = kunjungan.faskesId || kunjungan.poliklinik?.faskesId || user.faskesId;
+
+  const result = await prisma.$transaction(async (tx) => {
+    // Buat record Resep dengan status DIBERIKAN_DIRUANGAN
+    const resep = await tx.resep.create({
+      data: {
+        kunjunganId,
+        pasienId: kunjungan.pasienId,
+        dokterId,
+        penginputId,
+        status: 'DIBERIKAN_DIRUANGAN',
+      },
+    });
+
+    const details = [];
+    for (const r of (resepArr || [])) {
+      if (!r || !r.obatId) continue;
+
+      let validObatId = r.obatId;
+      let obat = await tx.masterObat.findUnique({ where: { id: validObatId } });
+
+      if (!obat) {
+        const fallbackObat = await tx.masterObat.findFirst({
+          where: {
+            OR: [
+              { kodeObat: validObatId },
+              { kfa_code: validObatId },
+              r.namaObat ? { namaObat: { equals: r.namaObat, mode: 'insensitive' } } : undefined
+            ].filter(Boolean)
+          }
+        });
+        if (fallbackObat) {
+          validObatId = fallbackObat.id;
+          obat = fallbackObat;
+        } else {
+          continue;
+        }
+      }
+
+      const qty = parseInt(r.jumlah || r.qty, 10) || 1;
+      const aturan = r.aturanPakai || r.signa || 'Diberikan di Ruangan Inap';
+      const catatanClean = `[Terapi Ruangan] ${r.catatan || ''}`.trim();
+
+      details.push({
+        resepId: resep.id,
+        obatId: validObatId,
+        jumlah: qty,
+        aturanPakai: aturan,
+        catatan: catatanClean,
+        dosisAngka: r.dosisAngka ? parseFloat(r.dosisAngka) : null,
+        dosisSatuan: r.dosisSatuan || null,
+        rutePemberian: r.rutePemberian || 'O',
+        frekuensi: r.frekuensi ? parseInt(r.frekuensi, 10) : 1,
+        noBatch: r.noBatch || null,
+      });
+
+      // Potong stok obat floor-stock di Faskes langsung secara Auto-FEFO
+      if (targetFaskesId) {
+        try {
+          await kurangiStokObatFaskes(tx, {
+            faskesId: targetFaskesId,
+            obatId: validObatId,
+            jumlah: qty,
+            noBatch: r.noBatch || null,
+            referensi: `CPPT-${kunjungan.id.slice(-6).toUpperCase()}`,
+            keterangan: `Pemberian Terapi Inap / Ruangan: ${obat.namaObat}`,
+            petugasId: user.id,
+            petugasNama: user.namaLengkap || user.username,
+          });
+        } catch (stokErr) {
+          console.warn('[simpanTerapiRuangan] Gagal memotong stok faskes:', stokErr.message);
+        }
+      }
+    }
+
+    if (details.length > 0) {
+      await tx.resepDetail.createMany({ data: details });
+    }
+
+    return await tx.resep.findUnique({
+      where: { id: resep.id },
+      include: {
+        details: {
+          include: { obat: true }
+        }
+      }
+    });
+  });
+
+  // Sinkronkan ke billing kasir secara otomatis
+  try {
+    await kasirService.generateTagihan(kunjunganId);
+  } catch (errTagihan) {
+    console.warn(`[Kasir] Gagal refresh tagihan setelah terapi inap:`, errTagihan.message);
+  }
+
+  return result;
 };
 
 /**
@@ -1526,13 +1654,13 @@ const simpanCPPT = async (kunjunganId, user, data) => {
     },
   });
 
-  // 2. Jika dokter mengikutsertakan resep terapi obat, simpan resep secara resmi
+  // 2. Jika dokter mengikutsertakan obat/BMHP terapi rawat inap (CPPT Bedside Administration)
   let savedResep = null;
   if (data.resep && Array.isArray(data.resep) && data.resep.length > 0) {
     try {
-      savedResep = await simpanResep(kunjunganId, user, data.resep);
+      savedResep = await simpanTerapiRuangan(kunjunganId, user, data.resep);
     } catch (resepErr) {
-      console.warn('[simpanCPPT] Gagal menyimpan resep bersama CPPT:', resepErr.message);
+      console.warn('[simpanCPPT] Gagal menyimpan terapi ruangan bersama CPPT:', resepErr.message);
     }
   }
 
@@ -1754,6 +1882,7 @@ module.exports = {
   getRiwayatPasienByRM,
   sendBundleForKunjungan,
   simpanCPPT,
+  simpanTerapiRuangan,
   getRiwayatCPPT,
   getRekamMedisSebelumnya,
   getResepByKunjungan,

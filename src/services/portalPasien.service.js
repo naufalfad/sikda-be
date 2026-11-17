@@ -2,6 +2,7 @@ const prisma = require('../config/prisma');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const whatsappService = require('./whatsapp.service');
+const jadwalNakesService = require('./jadwalNakes.service');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'rahasia-super-aman';
 
@@ -454,6 +455,46 @@ const createBooking = async (akunId, data) => {
     throw error;
   }
 
+  // Validasi Jadwal Roster & Kesesuaian Shift Dokter
+  const now = new Date();
+  const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const cleanTargetDate = String(tanggalKunjungan).split('T')[0];
+  const isTargetToday = cleanTargetDate === todayYmd;
+  const targetHari = jadwalNakesService.getHariFromDate(cleanTargetDate);
+
+  const jadwalHariTarget = await prisma.jadwalNakes.findFirst({
+    where: {
+      userId: dokterId,
+      hari: targetHari,
+      statusAktif: true,
+      ...(poliklinikId ? { poliklinikId } : {})
+    }
+  });
+
+  if (!jadwalHariTarget) {
+    const error = new Error(`Dokter ${dokterData.namaLengkap} tidak memiliki jadwal dinas pada hari ${targetHari} (${cleanTargetDate}). Silakan pilih dokter lain.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Jika booking untuk hari ini, wajib cocok dengan shift yang aktif saat ini
+  if (isTargetToday) {
+    const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const evalRes = jadwalNakesService.evaluateShiftStatus(nowTimeStr, jadwalHariTarget.jamMulai, jadwalHariTarget.jamSelesai, 60);
+
+    if (!evalRes.isAktif) {
+      if (evalRes.status === 'BELUM_DIMULAI') {
+        const error = new Error(`Dokter ${dokterData.namaLengkap} bertugas pada Shift ${jadwalHariTarget.shift} (${jadwalHariTarget.jamMulai} - ${jadwalHariTarget.jamSelesai}). Antrean saat ini belum dibuka untuk shift tersebut. Silakan pilih dokter yang sedang bertugas saat ini.`);
+        error.statusCode = 400;
+        throw error;
+      } else if (evalRes.status === 'SELESAI') {
+        const error = new Error(`Dokter ${dokterData.namaLengkap} telah menyelesaikan tugas Shift ${jadwalHariTarget.shift} (${jadwalHariTarget.jamMulai} - ${jadwalHariTarget.jamSelesai}). Silakan pilih dokter lain yang sedang aktif bertugas.`);
+        error.statusCode = 400;
+        throw error;
+      }
+    }
+  }
+
   const akun = await prisma.akunPasienOnline.findUnique({
     where: { id: akunId }
   });
@@ -714,7 +755,7 @@ const createBooking = async (akunId, data) => {
 /**
  * 10. Ambil daftar Faskes, Poli, dan Dokter untuk pilihan pendaftaran online
  */
-const getMasterDataForBooking = async (faskesId = null, poliklinikId = null) => {
+const getMasterDataForBooking = async (faskesId = null, poliklinikId = null, tanggalKunjungan = null, jamKunjungan = null) => {
   const faskesList = await prisma.faskes.findMany({
     where: { statusAktif: true },
     select: {
@@ -753,7 +794,7 @@ const getMasterDataForBooking = async (faskesId = null, poliklinikId = null) => 
   if (faskesId) {
     const dokterWhere = {
       faskesId,
-      role: 'DOKTER'
+      role: { in: ['DOKTER', 'DOKTER_UGD'] }
     };
     if (poliklinikId) {
       dokterWhere.OR = [
@@ -761,7 +802,7 @@ const getMasterDataForBooking = async (faskesId = null, poliklinikId = null) => 
         { poliklinikId: null }
       ];
     }
-    dokterList = await prisma.user.findMany({
+    const rawDokters = await prisma.user.findMany({
       where: dokterWhere,
       select: {
         id: true,
@@ -770,9 +811,70 @@ const getMasterDataForBooking = async (faskesId = null, poliklinikId = null) => 
         poliklinikId: true,
         poliklinik: {
           select: { id: true, namaPoli: true }
+        },
+        jadwalNakes: {
+          where: { statusAktif: true },
+          select: { hari: true, shift: true, jamMulai: true, jamSelesai: true }
         }
       },
       orderBy: { namaLengkap: 'asc' }
+    });
+
+    const now = new Date();
+    const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const cleanTargetDate = String(tanggalKunjungan || todayYmd).split('T')[0];
+    const isTargetToday = cleanTargetDate === todayYmd;
+    const targetHari = jadwalNakesService.getHariFromDate(cleanTargetDate);
+
+    const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    const evalTime = isTargetToday ? (jamKunjungan || nowTimeStr) : null;
+
+    dokterList = rawDokters.map(d => {
+      const jHariIni = d.jadwalNakes ? d.jadwalNakes.find(j => j.hari.toUpperCase() === targetHari) : null;
+      let isShiftAktifSaatIni = true;
+      let shiftStatus = 'LIBUR';
+      let statusKeterangan = 'Tidak Ada Jadwal';
+
+      if (jHariIni) {
+        if (evalTime) {
+          const evalRes = jadwalNakesService.evaluateShiftStatus(evalTime, jHariIni.jamMulai, jHariIni.jamSelesai, 60);
+          isShiftAktifSaatIni = evalRes.isAktif;
+          shiftStatus = evalRes.status;
+          if (shiftStatus === 'BELUM_DIMULAI') {
+            statusKeterangan = `Shift ${jHariIni.shift} (${jHariIni.jamMulai} - ${jHariIni.jamSelesai}) - Belum Dimulai`;
+          } else if (shiftStatus === 'SELESAI') {
+            statusKeterangan = `Shift ${jHariIni.shift} (${jHariIni.jamMulai} - ${jHariIni.jamSelesai}) - Sudah Berakhir`;
+          } else {
+            statusKeterangan = `Sedang Bertugas (${jHariIni.shift} ${jHariIni.jamMulai} - ${jHariIni.jamSelesai})`;
+          }
+        } else {
+          isShiftAktifSaatIni = true;
+          shiftStatus = 'AKTIF';
+          statusKeterangan = `Jadwal ${jHariIni.shift} (${jHariIni.jamMulai} - ${jHariIni.jamSelesai})`;
+        }
+      }
+
+      return {
+        id: d.id,
+        namaLengkap: d.namaLengkap,
+        username: d.username,
+        poliklinikId: d.poliklinikId,
+        poliklinik: d.poliklinik,
+        isBertugasHariIni: !!jHariIni,
+        isShiftAktifSaatIni: !!jHariIni && isShiftAktifSaatIni,
+        shiftStatus,
+        statusKeterangan,
+        jamBertugas: jHariIni ? `${jHariIni.jamMulai} - ${jHariIni.jamSelesai}` : null,
+        shift: jHariIni ? jHariIni.shift : null,
+        canBook: !!jHariIni && (isTargetToday ? isShiftAktifSaatIni : true)
+      };
+    });
+
+    // Urutkan: dokter yang canBook diletakkan di atas
+    dokterList.sort((a, b) => {
+      if (a.canBook !== b.canBook) return a.canBook ? -1 : 1;
+      if (a.isBertugasHariIni !== b.isBertugasHariIni) return a.isBertugasHariIni ? -1 : 1;
+      return (a.namaLengkap || '').localeCompare(b.namaLengkap || '');
     });
   }
 

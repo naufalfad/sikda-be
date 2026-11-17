@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const kasirService = require('./kasir.service');
 
 const radiologiService = {
   /**
@@ -12,14 +13,14 @@ const radiologiService = {
       prioritas = 'routine',
       catatan,
       details = [],
-      isRujukanLuar = true,
-      faskesTujuan = 'Instalasi Radiologi RSUD Terdekat'
+      isRujukanLuar,
+      faskesTujuan
     } = data;
 
-    // Validasi Kunjungan
+    // Validasi Kunjungan beserta faskes
     const kunjungan = await prisma.kunjungan.findUnique({
       where: { id: kunjunganId },
-      include: { pasien: true },
+      include: { pasien: true, faskes: true },
     });
 
     if (!kunjungan) {
@@ -27,6 +28,25 @@ const radiologiService = {
       error.statusCode = 404;
       throw error;
     }
+
+    const faskes = kunjungan.faskes;
+    const faskesRadLoinc = (faskes && Array.isArray(faskes.radiologiInternalLoinc))
+      ? faskes.radiologiInternalLoinc
+      : [];
+
+    // Tentukan apakah internal atau rujukan luar:
+    let finalIsRujukanLuar = true;
+    if (typeof isRujukanLuar === 'boolean') {
+      finalIsRujukanLuar = isRujukanLuar;
+    } else if (details.length > 0 && faskesRadLoinc.length > 0) {
+      // Jika seluruh pemeriksaan yang diminta tersedia internal di faskes ini
+      const allInternal = details.every(d => faskesRadLoinc.includes(d.kodeLoinc));
+      finalIsRujukanLuar = !allInternal;
+    }
+
+    const finalFaskesTujuan = finalIsRujukanLuar
+      ? (faskesTujuan || faskes?.defaultRadRujukan || 'Instalasi Radiologi RSUD Terdekat')
+      : null;
 
     const todayStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
     const randomSuffix = Math.floor(1000 + Math.random() * 9000);
@@ -43,11 +63,11 @@ const radiologiService = {
           pasienId: kunjungan.pasienId,
           dokterId,
           acsn,
-          status: isRujukanLuar ? 'MENUNGGU_HASIL_RUJUKAN' : 'REQUESTED',
+          status: finalIsRujukanLuar ? 'MENUNGGU_HASIL_RUJUKAN' : 'REQUESTED',
           prioritas,
           catatanKlinis: catatan,
-          isRujukanLuar: Boolean(isRujukanLuar),
-          faskesTujuan: faskesTujuan || 'Instalasi Radiologi RSUD Terdekat',
+          isRujukanLuar: Boolean(finalIsRujukanLuar),
+          faskesTujuan: finalFaskesTujuan,
           details: {
             create: details.map((d) => ({
               kodeLoinc: d.kodeLoinc || '39051-8',
@@ -78,19 +98,35 @@ const radiologiService = {
       return newOrder;
     });
 
+    // Sinkronisasi tagihan Kasir jika pemeriksaan internal
+    if (!finalIsRujukanLuar) {
+      try {
+        await kasirService.generateTagihan(kunjunganId);
+      } catch (errTagihan) {
+        console.warn('[Kasir Radiologi] Sinkronisasi tagihan gagal:', errTagihan.message);
+      }
+    }
+
     return result;
   },
 
   /**
-   * 2. Mengambil daftar order radiologi dengan filter
+   * 2. Mengambil daftar order radiologi dengan filter (Internal vs Rujukan Eksternal)
    */
   getAllOrders: async (query = {}, user = null) => {
-    const { status, kunjunganId, search } = query;
+    const { status, kunjunganId, search, tipe, isRujukanLuar } = query;
 
     const whereClause = {};
 
     if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
       whereClause.kunjungan = { faskesId: user.faskesId };
+    }
+
+    // Filter tipe pemeriksaan: INTERNAL vs EKSTERNAL (Rujukan Luar)
+    if (tipe === 'INTERNAL' || isRujukanLuar === false || isRujukanLuar === 'false') {
+      whereClause.isRujukanLuar = false;
+    } else if (tipe === 'EKSTERNAL' || isRujukanLuar === true || isRujukanLuar === 'true') {
+      whereClause.isRujukanLuar = true;
     }
 
     if (status) {
@@ -102,12 +138,30 @@ const radiologiService = {
     }
 
     if (search) {
-      whereClause.pasien = {
-        namaLengkap: {
-          contains: search,
-          mode: 'insensitive',
+      whereClause.OR = [
+        {
+          pasien: {
+            namaLengkap: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
         },
-      };
+        {
+          pasien: {
+            noRM: {
+              contains: search,
+              mode: 'insensitive',
+            },
+          },
+        },
+        {
+          acsn: {
+            contains: search,
+            mode: 'insensitive',
+          },
+        },
+      ];
     }
 
     return await prisma.orderRadiologi.findMany({
@@ -115,9 +169,20 @@ const radiologiService = {
       include: {
         pasien: true,
         dokter: { select: { id: true, namaLengkap: true } },
-        kunjungan: { select: { id: true, noAntrian: true, encounterId: true } },
+        kunjungan: { 
+          select: { 
+            id: true, 
+            noAntrian: true, 
+            encounterId: true,
+            poliklinik: { select: { namaPoli: true } }
+          } 
+        },
         details: true,
-        hasil: true,
+        hasil: {
+          include: {
+            dokterRadiologi: { select: { id: true, namaLengkap: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -271,6 +336,40 @@ const radiologiService = {
 
       return updatedOrder;
     });
+  },
+
+  deleteOrder: async (idOrKunjunganId) => {
+    const existingOrder = await prisma.orderRadiologi.findFirst({
+      where: {
+        OR: [
+          { id: idOrKunjunganId },
+          { kunjunganId: idOrKunjunganId }
+        ]
+      },
+      include: { details: true }
+    });
+
+    if (!existingOrder) {
+      const err = new Error('Order radiologi tidak ditemukan');
+      err.statusCode = 404;
+      throw err;
+    }
+
+    if (['IN_PROGRESS', 'COMPLETED'].includes(existingOrder.status)) {
+      const err = new Error('Order radiologi tidak dapat dibatalkan karena pemeriksaan sedang atau sudah selesai diproses.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    await prisma.detailOrderRadiologi.deleteMany({
+      where: { orderRadiologiId: existingOrder.id }
+    });
+
+    await prisma.orderRadiologi.delete({
+      where: { id: existingOrder.id }
+    });
+
+    return { message: 'Order radiologi berhasil dibatalkan dan dihapus.' };
   },
 };
 

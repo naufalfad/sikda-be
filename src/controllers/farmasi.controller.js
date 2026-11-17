@@ -19,7 +19,11 @@ exports.getAntrianFarmasi = async (req, res) => {
     const resepList = await prisma.resep.findMany({
       where,
       include: {
-        pasien: true,
+        pasien: {
+          include: {
+            penjamin: true
+          }
+        },
         dokter: {
           include: {
             tenagaMedis: true
@@ -29,7 +33,17 @@ exports.getAntrianFarmasi = async (req, res) => {
           include: {
             poliklinik: true,
             tagihan: {
-              select: { statusTagihan: true }
+              select: { 
+                id: true, 
+                statusTagihan: true, 
+                totalBiaya: true,
+                pembayaran: {
+                  select: {
+                    jumlahBayar: true,
+                    metodePembayaran: true
+                  }
+                }
+              }
             }
           }
         },
@@ -61,7 +75,11 @@ exports.getResepById = async (req, res) => {
     const resep = await prisma.resep.findUnique({
       where: { id },
       include: {
-        pasien: true,
+        pasien: {
+          include: {
+            penjamin: true
+          }
+        },
         dokter: {
           include: {
             tenagaMedis: true
@@ -71,7 +89,17 @@ exports.getResepById = async (req, res) => {
           include: {
             poliklinik: true,
             tagihan: {
-              select: { statusTagihan: true }
+              select: { 
+                id: true, 
+                statusTagihan: true, 
+                totalBiaya: true,
+                pembayaran: {
+                  select: {
+                    jumlahBayar: true,
+                    metodePembayaran: true
+                  }
+                }
+              }
             }
           }
         },
@@ -114,7 +142,9 @@ exports.prosesResep = async (req, res) => {
           kunjungan: {
             include: { poliklinik: true }
           },
-          pasien: true,
+          pasien: {
+            include: { penjamin: true }
+          },
           dokter: { include: { tenagaMedis: true } }
         }
       });
@@ -124,16 +154,22 @@ exports.prosesResep = async (req, res) => {
       }
 
       if (resep.status === 'SELESAI') {
-        throw new Error('Resep ini sudah diproses sebelumnya');
+        throw new Error('Resep ini sudah diproses dan diserahkan sebelumnya');
       }
 
-      // Pengecekan pembayaran di Kasir (Kecuali Pasien BPJS/Gratis)
+      // Pengecekan status pelunasan pembayaran di Kasir (Kecuali Pasien BPJS/Jaminan/UKM)
       const tagihan = await tx.tagihan.findUnique({
         where: { kunjunganId: resep.kunjunganId }
       });
 
-      if (tagihan && tagihan.statusTagihan !== 'LUNAS' && resep.kunjungan.jenisPenjamin !== 'BPJS') {
-        throw new Error('Pasien belum melakukan pembayaran di Kasir. Mohon arahkan pasien ke Kasir terlebih dahulu.');
+      const jenisPenjamin = (resep.pasien?.penjamin?.jenisPenjamin || '').toUpperCase();
+      const isBpjsOrJaminan = jenisPenjamin.includes('BPJS') || 
+                              jenisPenjamin.includes('JAMINAN') || 
+                              jenisPenjamin.includes('GRATIS') || 
+                              resep.kunjungan?.jenisPelayanan === 'UKM';
+
+      if (tagihan && tagihan.statusTagihan !== 'LUNAS' && !isBpjsOrJaminan) {
+        throw new Error('Pasien belum melakukan pembayaran di Kasir. Mohon arahkan pasien/keluarga ke Kasir terlebih dahulu sebelum penyerahan obat.');
       }
 
       // 2. Kurangi stok obat fisik di Faskes terkait dengan Multi-Batch & Auto-FEFO

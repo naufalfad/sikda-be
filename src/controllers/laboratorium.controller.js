@@ -30,7 +30,7 @@ const createOrder = async (req, res) => {
 
 const getAntrian = async (req, res, next) => {
   try {
-    const data = await laboratoriumService.getAntrianLab(req.user);
+    const data = await laboratoriumService.getAntrianLab(req.user, req.query);
     res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
@@ -82,11 +82,22 @@ const getRiwayatLabByPasien = async (req, res, next) => {
   }
 };
 
+const deleteOrder = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const data = await laboratoriumService.deleteOrderLab(id);
+    res.status(200).json({ success: true, message: 'Order laboratorium berhasil dibatalkan', data });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   createOrder,
   getAntrian,
   simpanHasil,
   getOrderByKunjungan,
   getDashboardStats,
-  getRiwayatLabByPasien
+  getRiwayatLabByPasien,
+  deleteOrder
 };

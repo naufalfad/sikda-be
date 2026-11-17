@@ -43,8 +43,9 @@ const imunisasiController = {
         try {
             // Ambil ID petugas yang sedang login (dari middleware auth)
             const petugasId = req.user?.id;
+            const currentUser = req.user;
 
-            const riwayat = await imunisasiService.catatRiwayat(req.body, petugasId);
+            const riwayat = await imunisasiService.catatRiwayat(req.body, petugasId, currentUser);
 
             res.status(201).json({
                 success: true,

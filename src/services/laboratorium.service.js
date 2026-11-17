@@ -4,6 +4,18 @@ const kasirService = require('./kasir.service');
 const createOrderLab = async (data) => {
   const { kunjunganId, pasienId, dokterId, catatanKlinis, tests, faskesTujuan, metodeRujukan } = data;
 
+  // Ambil data kunjungan beserta faskes untuk auto-resolusi kapabilitas internal spesifik faskes
+  const kunjungan = await prisma.kunjungan.findUnique({
+    where: { id: kunjunganId },
+    include: { faskes: true }
+  });
+
+  const faskes = kunjungan?.faskes;
+  const finalPasienId = pasienId || kunjungan?.pasienId;
+  const faskesLabInternalParams = (faskes && Array.isArray(faskes.labInternalParams) && faskes.labInternalParams.length > 0)
+    ? faskes.labInternalParams.map(p => p.toLowerCase().trim())
+    : null;
+
   // Ambil daftar master lab untuk auto-resolusi tersediaInternal jika tidak disediakan
   const masterLabList = await prisma.masterLaboratorium.findMany({
     select: { parameter: true, tersediaInternal: true }
@@ -11,7 +23,7 @@ const createOrderLab = async (data) => {
   const masterMap = new Map();
   masterLabList.forEach(m => masterMap.set(m.parameter.toLowerCase().trim(), m.tersediaInternal));
 
-  // Parameter yang secara medis baku dirujuk keluar di FKTP Puskesmas
+  // Parameter yang secara medis baku dirujuk keluar di FKTP Puskesmas jika tidak ada aturan faskes
   const rujukanKeywords = ['kultur', 'hba1c', 'tsh', 'ft4', 'tiroid', 'kimia klinik', 'troponin', 'ck-mb', 'tumor', 'afp', 'cea', 'psa', 'elektrolit'];
 
   // Normalisasi item details
@@ -23,15 +35,20 @@ const createOrderLab = async (data) => {
       isRujuk = Boolean(test.isRujukanLuar);
     } else {
       const lower = paramName.toLowerCase().trim();
-      if (masterMap.has(lower)) {
+      // Prioritaskan kapabilitas mandiri faskes dokter saat ini
+      if (faskesLabInternalParams !== null) {
+        const isInternalAtThisFaskes = faskesLabInternalParams.some(p => lower.includes(p) || p.includes(lower));
+        isRujuk = !isInternalAtThisFaskes;
+      } else if (masterMap.has(lower)) {
         isRujuk = !masterMap.get(lower);
       } else if (rujukanKeywords.some(k => lower.includes(k))) {
         isRujuk = true;
       }
     }
 
+    const defaultLabTarget = faskes?.defaultLabRujukan || 'UPT Labkesda Kabupaten / RSUD Terdekat';
     const itemFaskes = isRujuk
-      ? ((typeof test === 'object' && test.faskesTujuan) || faskesTujuan || 'UPT Labkesda Kabupaten / RSUD Terdekat')
+      ? ((typeof test === 'object' && test.faskesTujuan) || faskesTujuan || defaultLabTarget)
       : null;
 
     const itemMetode = isRujuk
@@ -80,7 +97,7 @@ const createOrderLab = async (data) => {
     order = await prisma.orderLaboratorium.create({
       data: {
         kunjunganId,
-        pasienId,
+        pasienId: finalPasienId,
         dokterId,
         catatanKlinis,
         status: initialStatus,
@@ -97,8 +114,8 @@ const createOrderLab = async (data) => {
   // NOTE: Jangan ubah status kunjungan menjadi MENUNGGU_LAB agar dokter tetap bisa melanjutkan
   // pemeriksaan (SOAP, resep obat, tindakan) tanpa terblokir.
   // Jika status masih MENUNGGU_DOKTER, kita set ke DIPERIKSA.
-  const kunjungan = await prisma.kunjungan.findUnique({ where: { id: kunjunganId } });
-  if (kunjungan && kunjungan.statusKunjungan === 'MENUNGGU_DOKTER') {
+  const kunjunganCurrent = await prisma.kunjungan.findUnique({ where: { id: kunjunganId } });
+  if (kunjunganCurrent && kunjunganCurrent.statusKunjungan === 'MENUNGGU_DOKTER') {
     await prisma.kunjungan.update({
       where: { id: kunjunganId },
       data: { statusKunjungan: 'DIPERIKSA' }
@@ -115,21 +132,70 @@ const createOrderLab = async (data) => {
   return order;
 };
 
-const getAntrianLab = async (user) => {
-  const where = {
-    status: { in: ['MENUNGGU_SAMPEL', 'DIPROSES'] }
-  };
+const getAntrianLab = async (user, query = {}) => {
+  const { tipe = 'INTERNAL', search, status } = query;
+  const where = {};
+
   if (user && user.faskesId && !['DINKES_ADMIN', 'DINKES_MONITORING'].includes(user.role)) {
     where.kunjungan = { faskesId: user.faskesId };
   }
+
+  if (tipe === 'INTERNAL') {
+    // Hanya order yang memiliki minimal 1 pemeriksaan internal faskes
+    where.details = {
+      some: {
+        isRujukanLuar: false
+      }
+    };
+    if (status) {
+      where.status = status;
+    } else {
+      where.status = { in: ['MENUNGGU_SAMPEL', 'DIPROSES'] };
+    }
+  } else if (tipe === 'EKSTERNAL') {
+    // Order yang memiliki parameter rujukan luar ke Labkesda/RSUD
+    where.details = {
+      some: {
+        isRujukanLuar: true
+      }
+    };
+    if (status) {
+      where.status = status;
+    } else {
+      where.status = { in: ['MENUNGGU_HASIL_RUJUKAN', 'MENUNGGU_SAMPEL', 'DIPROSES', 'SELESAI'] };
+    }
+  } else if (status) {
+    where.status = status;
+  }
+
+  if (search) {
+    where.OR = [
+      { pasien: { namaLengkap: { contains: search, mode: 'insensitive' } } },
+      { pasien: { noRM: { contains: search, mode: 'insensitive' } } },
+    ];
+  }
+
+  // Jika antrean INTERNAL: HANYA ambil parameter yang dikerjakan di faskes internal (isRujukanLuar: false)
+  // Parameter rujukan luar sama sekali tidak ditampilkan di antrean internal agar analis tidak bingung.
+  // Jika antrean EKSTERNAL: HANYA ambil parameter yang dirujuk ke faskes luar (isRujukanLuar: true).
+  const includeDetails = tipe === 'INTERNAL'
+    ? { where: { isRujukanLuar: false } }
+    : (tipe === 'EKSTERNAL' ? { where: { isRujukanLuar: true } } : true);
 
   return await prisma.orderLaboratorium.findMany({
     where,
     include: {
       pasien: true,
       dokter: { select: { id: true, namaLengkap: true } },
-      kunjungan: { select: { id: true, noAntrian: true, jamRegistrasi: true } },
-      details: true
+      kunjungan: { 
+        select: { 
+          id: true, 
+          noAntrian: true, 
+          jamRegistrasi: true,
+          poliklinik: { select: { namaPoli: true } }
+        } 
+      },
+      details: includeDetails
     },
     orderBy: {
       tanggalOrder: 'asc'
@@ -140,7 +206,8 @@ const getAntrianLab = async (user) => {
 const simpanHasilLab = async (orderId, details) => {
   return await prisma.$transaction(async (tx) => {
     const order = await tx.orderLaboratorium.findUnique({
-      where: { id: orderId }
+      where: { id: orderId },
+      include: { details: true }
     });
 
     if (!order) throw new Error('Order laboratorium tidak ditemukan');
@@ -159,16 +226,32 @@ const simpanHasilLab = async (orderId, details) => {
       }
     }
 
+    // Periksa status kelengkapan setelah update
+    const allDetails = await tx.orderLaboratoriumDetail.findMany({
+      where: { orderId }
+    });
+
+    const pendingInternal = allDetails.filter(d => !d.isRujukanLuar && (!d.hasil || d.hasil.trim() === ''));
+    const pendingExternal = allDetails.filter(d => d.isRujukanLuar && (!d.hasil || d.hasil.trim() === ''));
+
+    let nextStatus = 'SELESAI';
+    if (pendingInternal.length > 0) {
+      nextStatus = 'DIPROSES';
+    } else if (pendingExternal.length > 0) {
+      // Uji internal sudah selesai, namun hasil rujukan luar masih ditunggu dari Labkesda/RS
+      nextStatus = 'MENUNGGU_HASIL_RUJUKAN';
+    }
+
     const updatedOrder = await tx.orderLaboratorium.update({
       where: { id: orderId },
-      data: { status: 'SELESAI' },
+      data: { status: nextStatus },
       include: { details: true }
     });
 
     const kunjungan = await tx.kunjungan.findUnique({
       where: { id: order.kunjunganId }
     });
-    if (kunjungan && kunjungan.statusKunjungan === 'MENUNGGU_LAB') {
+    if (kunjungan && (kunjungan.statusKunjungan === 'MENUNGGU_LAB' || kunjungan.statusKunjungan === 'MENUNGGU_DOKTER')) {
       await tx.kunjungan.update({
         where: { id: order.kunjunganId },
         data: { statusKunjungan: 'DIPERIKSA' }
@@ -241,6 +324,15 @@ const getDashboardStats = async (user) => {
     }
   });
 
+  const rujukanEksternal = await prisma.orderLaboratorium.count({
+    where: {
+      ...whereFaskes,
+      details: {
+        some: { isRujukanLuar: true }
+      }
+    }
+  });
+
   // 2. Data 7 Hari Terakhir
   const days = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
   const chartData = [];
@@ -284,7 +376,8 @@ const getDashboardStats = async (user) => {
       totalHariIni,
       menunggu,
       sedangDilayani,
-      selesai: selesaiHariIni
+      selesai: selesaiHariIni,
+      rujukanEksternal
     },
     chartData,
     selesaiTerakhir
@@ -319,11 +412,44 @@ const getRiwayatLabByPasien = async (pasienId) => {
   });
 };
 
+const deleteOrderLab = async (idOrKunjunganId) => {
+  const existingOrder = await prisma.orderLaboratorium.findFirst({
+    where: {
+      OR: [
+        { id: idOrKunjunganId },
+        { kunjunganId: idOrKunjunganId }
+      ]
+    },
+    include: { details: true }
+  });
+
+  if (!existingOrder) {
+    throw new Error('Order laboratorium tidak ditemukan');
+  }
+
+  // Jika status sudah diproses atau selesai, tolak pembatalan
+  if (['DIPROSES', 'SELESAI'].includes(existingOrder.status)) {
+    throw new Error('Order laboratorium tidak dapat dibatalkan karena sampel sedang atau sudah diproses oleh analis.');
+  }
+
+  // Hapus detail dan order laboratorium
+  await prisma.orderLaboratoriumDetail.deleteMany({
+    where: { orderId: existingOrder.id }
+  });
+
+  await prisma.orderLaboratorium.delete({
+    where: { id: existingOrder.id }
+  });
+
+  return { message: 'Order laboratorium berhasil dibatalkan dan dihapus.' };
+};
+
 module.exports = {
   createOrderLab,
   getAntrianLab,
   simpanHasilLab,
   getOrderByKunjungan,
   getDashboardStats,
-  getRiwayatLabByPasien
+  getRiwayatLabByPasien,
+  deleteOrderLab
 };

@@ -305,8 +305,9 @@ const calculateTagihanDetails = async (kunjunganId, options = {}) => {
           const isObatPulang = (detail.catatan && detail.catatan.toLowerCase().includes('pulang')) ||
                                (r.catatan && r.catatan.toLowerCase().includes('pulang'));
           
-          const kategoriItem = isObatPulang ? 'Obat Pulang' : 'Obat';
-          const prefixItem = isObatPulang ? 'Resep Obat Pulang: ' : 'Obat Terapi Inap: ';
+          const isTerapiInap = r.status === 'DIBERIKAN_DIRUANGAN' || (detail.catatan && detail.catatan.toLowerCase().includes('terapi'));
+          const kategoriItem = isObatPulang ? 'Obat Pulang' : (isTerapiInap ? 'Obat Terapi Inap' : 'Obat');
+          const prefixItem = isObatPulang ? 'Resep Obat Pulang: ' : (isTerapiInap ? 'Obat Terapi Inap: ' : 'Resep Obat: ');
 
           if (isObatPulang && detail.obatId) {
             recordedObatIds.add(detail.obatId);
@@ -671,26 +672,17 @@ const prosesPembayaran = async (tagihanId, userId, data) => {
       }
     });
 
-    // 3. Integrasi Pemotongan Stok Obat, Vaksin & BMHP Faskes (Auto-FEFO)
+    // 3. Manajemen Alur Resep Farmasi vs Kasir
+    // Pemisahan tegas Alur Kasir vs Apotek:
+    // a) Resep MENUNGGU_FARMASI (Resep Rawat Jalan & Resep Obat Pulang):
+    //    TIDAK dipotong stoknya di Kasir dan TIDAK diubah statusnya menjadi SELESAI di loket kasir.
+    //    Kasir hanya mengesahkan pelunasan tagihan keuangan (statusTagihan = 'LUNAS').
+    //    Pasien selanjutnya membawa bukti bayar/jaminan ke Apotek. Apoteker yang bertugas
+    //    melakukan telaah klinis 5 Benar, menyiapkan obat, memotong stok fisik FEFO, dan menyelesaikan resep.
+    // b) Resep DIBERIKAN_DIRUANGAN (Terapi Bedside Rawat Inap / CPPT):
+    //    Stok sudah otomatis dipotong saat dokter/perawat menginput di ruangan rawat inap,
+    //    sehingga tidak dipotong ulang di kasir (mencegah double deduction).
     const targetFaskesId = tagihan.kunjungan?.faskesId || tagihan.kunjungan?.poliklinik?.faskesId;
-    if (targetFaskesId && tagihan.kunjungan?.resep && tagihan.kunjungan.resep.length > 0) {
-      for (const r of tagihan.kunjungan.resep) {
-        if (r.status !== 'SELESAI' && r.status !== 'BATAL' && r.details) {
-          for (const d of r.details) {
-            await kurangiStokObatFaskes(tx, {
-              faskesId: targetFaskesId,
-              obatId: d.obatId,
-              jumlah: d.jumlah,
-              noBatch: d.noBatch || null,
-            });
-          }
-          await tx.resep.update({
-            where: { id: r.id },
-            data: { status: 'SELESAI' },
-          });
-        }
-      }
-    }
 
     // 3b. Integrasi Pemotongan Stok BMHP Tindakan Medis (Auto-FEFO)
     if (targetFaskesId && tagihan.kunjungan?.tindakans && tagihan.kunjungan.tindakans.length > 0) {

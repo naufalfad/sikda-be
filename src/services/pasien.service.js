@@ -3,6 +3,7 @@ const cloudinary = require('cloudinary').v2;
 const satusehatService = require('./satusehat.service');
 const PCareService = require('./bpjs/pcare.service');
 const bpjsConfig = require('../config/bpjs');
+const jadwalNakesService = require('./jadwalNakes.service');
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -10,7 +11,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-const createPasien = async (data) => {
+const createPasien = async (data, user = null) => {
   let tandaTanganUrl = '';
   
   // Upload tanda tangan ke Cloudinary jika ada base64 string
@@ -366,6 +367,37 @@ const createPasien = async (data) => {
         const error = new Error('Dokter tujuan wajib dipilih untuk pelayanan rawat jalan.');
         error.statusCode = 400;
         throw error;
+      }
+
+      // Validasi jadwal nakes & cuti: Dokter harus berstatus bertugas pada tanggal registrasi & jam registrasi
+      if (!isUGD && data.dokterTujuan && data.poliTujuan) {
+        const now = new Date();
+        const todayYmd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const regDateStr = String(data.tanggalRegistrasi || todayYmd).split('T')[0];
+        const nowTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const regTimeStr = data.jamRegistrasi || nowTimeStr;
+
+        try {
+          const statusDokter = await jadwalNakesService.getDokterBertugasByPoli(data.poliTujuan, regDateStr, user, null, false, regTimeStr);
+          const selectedDoc = statusDokter.dokters.find(d => d.id === data.dokterTujuan);
+          if (selectedDoc && !selectedDoc.isBertugasHariIni) {
+            const err = new Error(`Dokter ${selectedDoc.namaLengkap} tidak bertugas pada tanggal ${statusDokter.tanggal} (${selectedDoc.statusKeterangan}). Silakan pilih dokter yang sedang bertugas.`);
+            err.statusCode = 400;
+            throw err;
+          }
+
+          const isToday = regDateStr === todayYmd;
+          if (isToday && selectedDoc && selectedDoc.jadwalDetail) {
+            if (selectedDoc.isShiftAktifSaatIni === false) {
+              const err = new Error(`Dokter ${selectedDoc.namaLengkap} bertugas pada ${selectedDoc.statusKeterangan}, tidak sesuai dengan jam kedatangan/registrasi loket saat ini (${regTimeStr}). Mohon pilih dokter yang sedang aktif bertugas pada jam ini.`);
+              err.statusCode = 400;
+              throw err;
+            }
+          }
+        } catch (jErr) {
+          if (jErr.statusCode === 400) throw jErr;
+          console.warn('[Jadwal Nakes Validation Warning]:', jErr.message);
+        }
       }
 
       const poliklinik = data.poliTujuan ? await tx.poliklinik.findUnique({

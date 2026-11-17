@@ -18,5 +18,6 @@ router.get('/order/:id', radiologiController.getOrderById);
 // 4. POST /api/radiologi/order/:id/hasil (Input Hasil & Ekspertise Radiologi)
 router.post('/order/:id/hasil', radiologiController.submitHasil);
 router.post('/order/:id/hasil-rujukan', radiologiController.submitHasilRujukanLuar);
+router.delete('/order/:id', radiologiController.deleteOrder);
 
 module.exports = router;

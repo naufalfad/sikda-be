@@ -28,6 +28,7 @@ const virtualAssistantRoute = require('./virtualAssistant.routes');
 const ugdRoute = require('./ugd.routes');
 const remunerasiRoute = require('./remunerasi.routes');
 const laporanRoute = require('./laporan.routes');
+const jadwalNakesRoute = require('./jadwalNakes.routes');
 
 const router = express.Router();
 
@@ -147,6 +148,10 @@ const defaultRoutes = [
   {
     path: '/laporan',
     route: laporanRoute,
+  },
+  {
+    path: '/jadwal-nakes',
+    route: jadwalNakesRoute,
   },
 ];
 

@@ -64,6 +64,31 @@ const updateLayanan = async (req, res, next) => {
   }
 };
 
+const getFaskesKapabilitas = async (req, res, next) => {
+  try {
+    const data = await klinikService.getFaskesKapabilitas(req.user);
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const updateFaskesKapabilitas = async (req, res, next) => {
+  try {
+    const data = await klinikService.updateFaskesKapabilitas(req.user, req.body);
+    res.json({
+      success: true,
+      message: 'Kapabilitas laboratorium dan radiologi faskes berhasil diperbarui.',
+      data
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getPoliklinik,
   createPoliklinik,
@@ -71,5 +96,7 @@ module.exports = {
   getLayananByPoli,
   getDokterByPoli,
   createLayanan,
-  updateLayanan
+  updateLayanan,
+  getFaskesKapabilitas,
+  updateFaskesKapabilitas
 };

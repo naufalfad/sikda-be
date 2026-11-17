@@ -20,4 +20,8 @@ router.put('/layanan/:id', klinikController.updateLayanan);
 // Dokter routes
 router.get('/dokter/:poliId', klinikController.getDokterByPoli);
 
+// Kapabilitas Penunjang (Laboratorium & Radiologi) terisolasi per-Faskes
+router.get('/kapabilitas', klinikController.getFaskesKapabilitas);
+router.put('/kapabilitas', klinikController.updateFaskesKapabilitas);
+
 module.exports = router;

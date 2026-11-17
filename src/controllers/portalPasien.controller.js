@@ -120,8 +120,8 @@ const createBooking = async (req, res, next) => {
 
 const getMasterDataForBooking = async (req, res, next) => {
   try {
-    const { faskesId, poliklinikId } = req.query;
-    const result = await portalPasienService.getMasterDataForBooking(faskesId, poliklinikId);
+    const { faskesId, poliklinikId, tanggal, jam } = req.query;
+    const result = await portalPasienService.getMasterDataForBooking(faskesId, poliklinikId, tanggal, jam);
     res.status(200).json({
       success: true,
       data: result

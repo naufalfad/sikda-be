@@ -1,5 +1,6 @@
 const prisma = require('../config/prisma');
 const satusehatConfig = require('../config/satusehat');
+const kasirService = require('./kasir.service');
 const { createFhirClient } = require('./satusehat/gateway.service');
 const { buildRoomLocationPayload, buildBedLocationPayload } = require('../utils/fhir-mappers/location-room.mapper');
 const { buildDevicePayload } = require('../utils/fhir-mappers/device.mapper');
@@ -258,6 +259,12 @@ const createBed = async (data) => {
 };
 
 const updateBed = async (id, data) => {
+  // Ambil data bed saat ini beserta kunjunganAktifId sebelum diubah
+  const currentBed = await prisma.tempatTidur.findUnique({
+    where: { id },
+    include: { ruangan: true }
+  });
+
   const updateData = { ...data };
   if (data.statusBed) {
     if (data.statusBed === 'TERISI') {
@@ -271,6 +278,28 @@ const updateBed = async (id, data) => {
     } else {
       updateData.operationalStatus = 'U';
       updateData.kunjunganAktifId = null;
+    }
+  }
+
+  // JIKA BED SEBELUMNYA SEDANG TERISI DAN DIKOSONGKAN OLEH ADMIN (TERSEDIA / DIBERSIHKAN / PERBAIKAN)
+  // Otomatis discharge kunjungan pasien dan teruskan tagihannya ke Loket Kasir!
+  if (currentBed?.kunjunganAktifId && data.statusBed && data.statusBed !== 'TERISI') {
+    const activeKunjunganId = currentBed.kunjunganAktifId;
+    try {
+      await prisma.kunjungan.update({
+        where: { id: activeKunjunganId },
+        data: {
+          statusKunjungan: 'MENUNGGU_KASIR',
+          statusPulang: 'PULANG_SEMBUH',
+          caraKeluar: 'PERSETUJUAN_DOKTER',
+          kondisiDischarge: 'SEMBUH',
+          waktuDischarge: new Date()
+        }
+      });
+      // Otomatis kalkulasi dan terbitkan tagihan ke Kasir
+      await kasirService.generateTagihan(activeKunjunganId);
+    } catch (errKunjungan) {
+      console.warn('[Admin Free Bed] Sinkronisasi tagihan kasir:', errKunjungan.message);
     }
   }
 
